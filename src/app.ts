@@ -155,7 +155,15 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     contextTitle.textContent = text;
   };
 
-  const syncInspectorChrome = () => {
+  const syncReadingChrome = () => {
+    const inReader = state.route === "reader";
+    root.classList.toggle("reading-mode", inReader);
+    highlightBtn.hidden = !inReader;
+    backlinksBtn.hidden = !inReader;
+    if (!inReader) {
+      root.classList.add("backlinks-hidden");
+      return;
+    }
     root.classList.toggle("backlinks-hidden", !state.inspectorOpen);
     backlinksBtn.dataset.active = String(state.inspectorOpen);
   };
@@ -199,6 +207,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     state.detailQuoteId = null;
     if (route === "reader" && state.book) {
       setContextTitle(state.book.title);
+      syncReadingChrome();
       return;
     }
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
@@ -207,6 +216,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     if (route === "quotes") renderQuotesOverview();
     if (route === "search") renderSearch();
     if (route === "settings") renderSettings();
+    syncReadingChrome();
   };
 
   const bindDemoNavigation = () => {
@@ -234,11 +244,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     stageMain.innerHTML = renderBookDetailPage(book, quotes);
     stageMain.querySelector("#btn-back-library-detail")?.addEventListener("click", () => setRoute("library"));
     bindDemoNavigation();
-    state.inspectorOpen = true;
-    syncInspectorChrome();
-    renderInspectorQuotes(
-      quotes.map((q) => ({ quoteText: q.quoteText, page: q.page })),
-    );
+    syncReadingChrome();
   };
 
   const openQuoteDetail = (id: string) => {
@@ -250,9 +256,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     setContextTitle("Citace");
     stageMain.innerHTML = renderQuoteDetail(quote, book);
     stageMain.querySelector("#btn-back-quotes")?.addEventListener("click", () => setRoute("quotes"));
-    state.inspectorOpen = true;
-    syncInspectorChrome();
-    renderInspectorQuotes([{ quoteText: quote.quoteText, page: quote.page }]);
+    syncReadingChrome();
   };
 
   const renderLibrary = () => {
@@ -588,7 +592,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       state.route = "reader";
       setRoute("reader");
       state.inspectorOpen = true;
-      syncInspectorChrome();
+      syncReadingChrome();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);
@@ -624,13 +628,14 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   });
 
   backlinksBtn.addEventListener("click", () => {
+    if (state.route !== "reader") return;
     state.inspectorOpen = !state.inspectorOpen;
-    syncInspectorChrome();
+    syncReadingChrome();
   });
 
   inspector.querySelector("#btn-hide-inspector")?.addEventListener("click", () => {
     state.inspectorOpen = false;
-    syncInspectorChrome();
+    syncReadingChrome();
   });
 
   window.addEventListener("keydown", (ev) => {
@@ -642,9 +647,9 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       ev.preventDefault();
       setRoute("search");
     }
-    if (ev.key === "Escape") {
+    if (ev.key === "Escape" && state.route === "reader") {
       state.inspectorOpen = false;
-      syncInspectorChrome();
+      syncReadingChrome();
     }
   });
 
@@ -653,9 +658,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     setLibraryPath(state.libraryRoot, state.libraryRoot);
   }
 
-  syncInspectorChrome();
   setRoute("library");
-  renderInspectorQuotes([]);
 }
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
