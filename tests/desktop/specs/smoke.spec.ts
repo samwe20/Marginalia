@@ -237,7 +237,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
         { timeout: 20_000, timeoutMsg: "notes view not ready" },
       );
-      await expect($('.notes-layout[data-notes-ready="1"] .note-list-item')).toBeDisplayed();
+      await expect($('.notes-layout[data-notes-ready="1"] #btn-new-note')).toBeDisplayed();
       record("S11", "Notes view (wikilink/backlink UI)", true);
     } catch (e) {
       record("S11", "Notes view (wikilink/backlink UI)", false, String(e));
