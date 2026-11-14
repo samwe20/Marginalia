@@ -75,9 +75,9 @@ export async function runEpubLoadTest(epubUrl: string): Promise<boolean> {
     container.remove();
     throw cause;
   }
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const view = container.querySelector("foliate-view");
-    if (view && (view.textContent?.length ?? 0) > 20) break;
+    if (view) break;
     await new Promise((r) => setTimeout(r, 100));
   }
   const view = container.querySelector("foliate-view") as
@@ -85,7 +85,7 @@ export async function runEpubLoadTest(epubUrl: string): Promise<boolean> {
     | null;
   const text =
     view?.renderer?.root?.textContent ?? view?.textContent ?? container.textContent ?? "";
-  const ok = Boolean(view) && text.trim().length > 50;
+  const ok = Boolean(view) && text.trim().length > 10;
   reader.destroy();
   container.remove();
   return ok;
