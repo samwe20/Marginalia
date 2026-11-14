@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { persistBookFile, readBookBytes } from "./book-library";
+import { mergeLibraryEntries, persistBookFile, readBookBytes } from "./book-library";
 
 describe("book-library", () => {
   beforeEach(() => {
@@ -14,6 +14,34 @@ describe("book-library", () => {
       },
       key: (i: number) => [...store.keys()][i] ?? null,
     });
+  });
+
+  it("merges disk library cards with recent order", () => {
+    const disk = [
+      {
+        slug: "sample-aa12",
+        kind: "pdf" as const,
+        title: "sample",
+        author: "",
+        sha256: "a".repeat(64),
+        filePath: "/lib/knihy/sample-aa12.pdf",
+        updated: "2026-01-02T00:00:00.000Z",
+      },
+    ];
+    const recent = [
+      {
+        slug: "sample-aa12",
+        kind: "pdf" as const,
+        title: "sample",
+        author: "",
+        sha256: "a".repeat(64),
+        filePath: "/lib/knihy/sample-aa12.pdf",
+        updated: "",
+      },
+    ];
+    const merged = mergeLibraryEntries(recent, disk);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.filePath).toContain("sample-aa12.pdf");
   });
 
   it("roundtrips book bytes in web storage", async () => {

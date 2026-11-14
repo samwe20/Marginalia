@@ -13,6 +13,7 @@ export async function wireSmokeAutomation(onOpen: SmokeOpenHandler): Promise<voi
   const { invoke } = await import("@tauri-apps/api/core");
   const enabled = (await invoke("smoke_is_enabled")) as boolean;
   if (!enabled) return;
+  (window as unknown as { __MARGINALIA_SMOKE_OPEN__?: boolean }).__MARGINALIA_SMOKE_OPEN__ = true;
   const fixtures = (await invoke("smoke_fixture_paths")) as SmokeFixtures;
   const { listen } = await import("@tauri-apps/api/event");
   await listen<{ library_root: string; file_path: string }>("marginalia-smoke-open", (ev) => {
@@ -22,10 +23,20 @@ export async function wireSmokeAutomation(onOpen: SmokeOpenHandler): Promise<voi
     if (!filePath || !fixtures.library_root) return;
     void onOpen(fixtures.library_root, filePath);
   };
-  window.addEventListener("keydown", (ev) => {
-    if (ev.ctrlKey && ev.key.toLowerCase() === "o") {
-      ev.preventDefault();
-      openFixture(fixtures.pdf_path);
-    }
-  });
+  window.addEventListener(
+    "keydown",
+    (ev) => {
+      if (ev.ctrlKey && ev.key.toLowerCase() === "o") {
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        openFixture(fixtures.pdf_path);
+      }
+    },
+    true,
+  );
+}
+
+export function smokeOpenShortcutActive(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as { __MARGINALIA_SMOKE_OPEN__?: boolean }).__MARGINALIA_SMOKE_OPEN__ === true;
 }

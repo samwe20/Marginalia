@@ -10,6 +10,66 @@ export interface ParsedBookCard {
   updated: string;
 }
 
+export interface LibraryBookEntry {
+  slug: string;
+  kind: "pdf" | "epub";
+  title: string;
+  author: string;
+  sha256: string;
+  filePath: string;
+  updated?: string;
+}
+
+export function mergeLibraryEntries(recent: LibraryBookEntry[], onDisk: LibraryBookEntry[]): LibraryBookEntry[] {
+  const bySlug = new Map<string, LibraryBookEntry>();
+  for (const b of onDisk) bySlug.set(b.slug, b);
+  const order = recent.map((r) => r.slug);
+  for (const b of recent) {
+    const disk = bySlug.get(b.slug);
+    bySlug.set(b.slug, disk ? { ...disk, ...b, filePath: disk.filePath || b.filePath } : b);
+  }
+  return [...bySlug.values()].sort((a, b) => {
+    const ia = order.indexOf(a.slug);
+    const ib = order.indexOf(b.slug);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return (b.updated || "").localeCompare(a.updated || "");
+  });
+}
+
+/** Book cards persisted under knihovna/knihy/*.md (desktop source of truth). */
+export async function listLibraryBooksFromDisk(libraryRoot: string): Promise<LibraryBookEntry[]> {
+  if (!libraryRoot || !isTauri()) return [];
+  const { readDir, readTextFile } = await import("@tauri-apps/plugin-fs");
+  const dir = `${libraryRoot}/knihy`;
+  try {
+    const entries = await readDir(dir);
+    const books: LibraryBookEntry[] = [];
+    for (const e of entries) {
+      if (!e.isFile || !e.name?.endsWith(".md")) continue;
+      const slug = e.name.slice(0, -3);
+      const text = await readTextFile(`${dir}/${e.name}`);
+      const card = parseBookCardYaml(text);
+      if (!card?.path) continue;
+      const kind: "pdf" | "epub" = card.path.toLowerCase().endsWith(".epub") ? "epub" : "pdf";
+      books.push({
+        slug,
+        kind,
+        title: card.title || slug,
+        author: card.author,
+        sha256: card.sha256,
+        filePath: card.path,
+        updated: card.updated,
+      });
+    }
+    books.sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
+    return books;
+  } catch {
+    return [];
+  }
+}
+
 function bookExt(name: string): string {
   const m = name.toLowerCase().match(/\.(pdf|epub)$/);
   return m ? `.${m[1]}` : ".pdf";

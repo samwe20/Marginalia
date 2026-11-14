@@ -836,6 +836,7 @@ input {
 
 .pdf-page canvas {
   display: block;
+  pointer-events: none;
 }
 
 .pdf-page .textLayer {

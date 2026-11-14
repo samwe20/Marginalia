@@ -6,11 +6,19 @@ import {
   ensureBookCard,
   type BookMeta,
 } from "./lib/storage";
-import { loadBookCard, persistBookFile, readBookBytes, updateBookCardPath } from "./lib/book-library";
+import {
+  listLibraryBooksFromDisk,
+  loadBookCard,
+  mergeLibraryEntries,
+  persistBookFile,
+  readBookBytes,
+  updateBookCardPath,
+  type LibraryBookEntry,
+} from "./lib/book-library";
 import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
-import { wireSmokeAutomation } from "./lib/smoke-bridge";
+import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
@@ -51,10 +59,7 @@ import { mountToastRegion } from "./ui/toast";
 
 type Route = "library" | "quotes" | "notes" | "search" | "settings" | "reader";
 
-interface RecentBook extends BookMeta {
-  slug: string;
-  kind: "pdf" | "epub";
-}
+type RecentBook = LibraryBookEntry;
 
 const ROUTE_LABEL: Record<Exclude<Route, "reader">, string> = {
   library: "Knihovna",
@@ -229,8 +234,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const pushRecent = (book: RecentBook) => {
     const list = getRecentBooks().filter((b) => b.slug !== book.slug);
-    list.unshift(book);
+    list.unshift({ ...book, updated: book.updated || new Date().toISOString() });
     localStorage.setItem("marginalia.recentBooks", JSON.stringify(list.slice(0, 24)));
+  };
+
+  const listBooksForLibrary = async (): Promise<RecentBook[]> => {
+    const recent = getRecentBooks();
+    if (!isTauri() || !state.libraryRoot) return recent;
+    const onDisk = await listLibraryBooksFromDisk(state.libraryRoot);
+    return mergeLibraryEntries(recent, onDisk);
   };
 
   const renderInspectorQuotes = (quotes: { quoteText: string; page: string }[]) => {
@@ -263,7 +275,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
     setContextTitle(label);
-    if (route === "library") renderLibrary();
+    if (route === "library") void renderLibrary();
     if (route === "quotes") renderQuotesOverview();
     if (route === "notes") {
       void renderNotesView(stageMain, {
@@ -333,8 +345,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     syncReadingChrome();
   };
 
-  const renderLibrary = () => {
-    const recent = getRecentBooks();
+  const renderLibrary = async () => {
+    const recent = await listBooksForLibrary();
     const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
     stageMain.innerHTML = `
       <div class="page">
@@ -638,7 +650,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (state.libraryRoot) setLibraryPath(state.libraryRoot, state.libraryRoot);
       else setLibraryPath("Ukázková knihovna aktivní");
       renderSettings();
-      if (state.route === "library") renderLibrary();
+      if (state.route === "library") void renderLibrary();
       if (state.route === "notes") setRoute("notes");
     });
     stageMain.querySelector("#btn-demo-remove")?.addEventListener("click", () => {
@@ -651,7 +663,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (state.libraryRoot) setLibraryPath(state.libraryRoot, state.libraryRoot);
       else setLibraryPath("Žádná knihovna");
       renderSettings();
-      if (state.route === "library") renderLibrary();
+      if (state.route === "library") void renderLibrary();
       if (state.route === "quotes") renderQuotesOverview();
       if (state.route === "notes") setRoute("notes");
     });
@@ -739,9 +751,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     state.slug = slug;
     await ensureBookCard(state.libraryRoot, state.book);
+    const now = new Date().toISOString();
 
     if (lower.endsWith(".pdf")) {
-      pushRecent({ ...state.book, slug: state.slug, kind: "pdf" });
+      pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
       epub?.destroy();
       epub = null;
       mountReaderChrome("pdf", state.book.title);
@@ -761,7 +774,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
     } else if (lower.endsWith(".epub")) {
-      pushRecent({ ...state.book, slug: state.slug, kind: "epub" });
+      pushRecent({ ...state.book, slug: state.slug, kind: "epub", updated: now });
       pdf?.destroy();
       pdf = null;
       mountReaderChrome("epub", state.book.title);
@@ -888,6 +901,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   window.addEventListener("keydown", (ev) => {
     if (ev.ctrlKey && ev.key.toLowerCase() === "o") {
+      if (smokeOpenShortcutActive()) return;
       ev.preventDefault();
       void promptOpenBook();
     }
@@ -902,6 +916,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   });
 
   if (state.libraryRoot) {
+    if (isTauri()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("allow_library_path", { path: state.libraryRoot });
+    }
     void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
   }

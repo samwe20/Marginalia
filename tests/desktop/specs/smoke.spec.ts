@@ -30,9 +30,16 @@ async function smokeOpen(filePath: string) {
   await invoke("smoke_open_book", { libraryRoot: library, filePath });
 }
 
+async function waitPdfTextReady(timeoutMs = 45_000) {
+  await browser.waitUntil(
+  async () => (await $("#pdf-root").getAttribute("data-pdf-text-ready")) === "1",
+    { timeout: timeoutMs, interval: 400, timeoutMsg: "PDF text layer not ready" },
+  );
+}
+
 async function selectFirstPdfText(): Promise<boolean> {
   return browser.execute(() => {
-    const span = document.querySelector(".textLayer span") as HTMLElement | null;
+    const span = document.querySelector("#pdf-root .textLayer span") as HTMLElement | null;
     if (!span?.firstChild) return false;
     const range = document.createRange();
     range.selectNodeContents(span);
@@ -91,8 +98,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     try {
       await $('[data-route="library"]').click();
       await smokeOpen(pdfPath);
-      await browser.pause(3500);
-      await expect($("#pdf-root .textLayer")).toBeDisplayed();
+      await waitPdfTextReady();
+      await expect($("#pdf-root .textLayer span")).toBeExisting();
       record("S03", "Open PDF via automation hook", true);
     } catch (e) {
       record("S03", "Open PDF via automation hook", false, String(e));
@@ -108,8 +115,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         await browser.pause(800);
       }
       await browser.keys(["Control", "o"]);
-      await browser.pause(3500);
-      await expect($("#pdf-root .textLayer")).toBeDisplayed();
+      await waitPdfTextReady();
+      await expect($("#pdf-root .textLayer span")).toBeExisting();
       record("S04", "Ctrl+O open book (smoke fixture)", true);
     } catch (e) {
       record("S04", "Ctrl+O open book (smoke fixture)", false, String(e));
@@ -119,6 +126,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S05 PDF text selection + highlight", async () => {
     try {
+      await waitPdfTextReady();
       const ok = await selectFirstPdfText();
       expect(ok).toBe(true);
       await saveScreenshot("smoke-pdf-text-selected.png");
@@ -145,8 +153,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const card = await $(".book-card:not(.book-card--demo)");
       await expect(card).toBeDisplayed();
       await card.click();
-      await browser.pause(2500);
-      await expect($("#pdf-root .textLayer")).toBeDisplayed();
+      await waitPdfTextReady();
+      await expect($("#pdf-root .textLayer span")).toBeExisting();
       await saveScreenshot("smoke-book-reopened.png");
       record("S06", "Close & reopen from library", true);
     } catch (e) {
@@ -180,14 +188,19 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S09 search UI", async () => {
     try {
+      await $('[data-route="settings"]').click();
+      await browser.pause(300);
+      const load = await $("#btn-demo-load");
+      if (await load.isEnabled()) await load.click();
+      await browser.pause(800);
       await $('[data-route="search"]').click();
       await browser.pause(400);
       const input = await $("#search-input");
-      if (await input.isExisting()) {
-        await input.setValue("Marginalia");
-        await browser.pause(800);
-      }
-      record("S09", "Search finds quote/note", true, "query submitted");
+      await input.setValue("Dickens");
+      await browser.pause(1200);
+      const hits = await $("#search-results .quote-db-card, #search-results .search-note-card");
+      await expect(hits).toBeDisplayed();
+      record("S09", "Search finds quote/note", true, "demo index hit");
     } catch (e) {
       record("S09", "Search finds quote/note", false, String(e));
       throw e;
@@ -214,9 +227,9 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S11 notes / wikilink surface", async () => {
     try {
       await $('[data-route="notes"]').click();
-      await browser.pause(600);
-      await expect($('[data-route="notes"]')).toBeDisplayed();
-      record("S11", "Notes view (wikilink/backlink UI)", true, "smoke opens view; backlink drill-down manual in checklist");
+      await browser.pause(800);
+      await expect($(".notes-layout #editor-root")).toBeDisplayed();
+      record("S11", "Notes view (wikilink/backlink UI)", true);
     } catch (e) {
       record("S11", "Notes view (wikilink/backlink UI)", false, String(e));
       throw e;
@@ -227,16 +240,19 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     try {
       await $('[data-route="library"]').click();
       await smokeOpen(pdfPath);
-      await browser.pause(2000);
+      await waitPdfTextReady();
       await $("#btn-back-library").click();
-      await browser.pause(500);
+      await browser.pause(800);
       await browser.reloadSession();
-      await browser.pause(3500);
+      await browser.pause(4000);
       await $('[data-route="library"]').click();
+      await browser.pause(500);
       const card = await $(".book-card:not(.book-card--demo)");
-      const exists = await card.isExisting();
-      record("S12", "Restart app → library persists", exists, exists ? undefined : "no card after reloadSession");
-      if (!exists) throw new Error("library card missing after reload");
+      await expect(card).toBeDisplayed();
+      await card.click();
+      await waitPdfTextReady();
+      await saveScreenshot("smoke-book-restarted.png");
+      record("S12", "Restart app → library persists", true);
     } catch (e) {
       record("S12", "Restart app → library persists", false, String(e));
       throw e;
