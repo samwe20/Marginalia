@@ -197,7 +197,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(400);
       const input = await $("#search-input");
       await input.setValue("Tolstoj");
-      await browser.keys(["Enter"]);
+      await $("#btn-search-run").click();
       await browser.pause(1200);
       const hits = await $("#search-results .quote-db-card, #search-results .search-note-card");
       await expect(hits).toBeDisplayed();
@@ -215,6 +215,11 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const load = await $("#btn-demo-load");
       if (await load.isEnabled()) await load.click();
       await browser.pause(600);
+      await $('[data-route="library"]').click();
+      await browser.pause(400);
+      await expect($(".book-card--demo")).toBeDisplayed();
+      await $('[data-route="settings"]').click();
+      await browser.pause(300);
       const remove = await $("#btn-demo-remove");
       if (await remove.isEnabled()) await remove.click();
       await browser.pause(400);
@@ -232,7 +237,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
         { timeout: 20_000, timeoutMsg: "notes view not ready" },
       );
-      await expect($(".notes-layout #editor-root")).toBeDisplayed();
+      await expect($('.notes-layout[data-notes-ready="1"] .note-list-item')).toBeDisplayed();
       record("S11", "Notes view (wikilink/backlink UI)", true);
     } catch (e) {
       record("S11", "Notes view (wikilink/backlink UI)", false, String(e));

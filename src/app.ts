@@ -19,6 +19,7 @@ import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
 import {
+  loadDesktopDemoEnabled,
   loadDesktopLibraryRoot,
   loadDesktopRecentBooks,
   saveDesktopLibraryRoot,
@@ -29,6 +30,7 @@ import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import {
+  DEMO_ENABLED_KEY,
   disableDemoData,
   enableDemoData,
   getDemoBook,
@@ -521,9 +523,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         <h1>Hledat citace a poznámky</h1>
         <label class="field">
           <span>Dotaz</span>
-          <input type="search" id="search-input" placeholder="Napište slovo nebo frázi…" autocomplete="off" />
+          <div class="search-field-row">
+            <input type="search" id="search-input" placeholder="Napište slovo nebo frázi…" autocomplete="off" />
+            <button type="button" class="primary-btn" id="btn-search-run">Hledat</button>
+          </div>
         </label>
-        <div id="search-results"></div>
+        <div id="search-results" aria-live="polite"></div>
       </div>
     `;
     const input = stageMain.querySelector<HTMLInputElement>("#search-input")!;
@@ -557,70 +562,83 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           );
         }
       }
-      const userNotes = await listNotes(state.libraryRoot);
-      if (!isTauri() && userNotes.length) {
-        const localHits = searchNotesLocal(userNotes, q);
-        if (localHits.length) {
-          parts.push(
-            `<section><h2 class="section-title">Poznámky (web)</h2><ul class="search-note-list">${localHits
-              .map(
-                (n) =>
-                  `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote(n, q))}</span></button></li>`,
-              )
-              .join("")}</ul></section>`,
-          );
+      if (!isTauri()) {
+        const userNotes = await listNotes(state.libraryRoot);
+        if (userNotes.length) {
+          const localHits = searchNotesLocal(userNotes, q);
+          if (localHits.length) {
+            parts.push(
+              `<section><h2 class="section-title">Poznámky (web)</h2><ul class="search-note-list">${localHits
+                .map(
+                  (n) =>
+                    `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote(n, q))}</span></button></li>`,
+                )
+                .join("")}</ul></section>`,
+            );
+          }
         }
       }
+
+      const paintResults = () => {
+        if (!parts.length) {
+          box.innerHTML = `<p class="muted">Nic nenalezeno.</p>`;
+          return;
+        }
+        box.innerHTML = parts.join("");
+        bindDemoNavigation();
+        stageMain.querySelectorAll("[data-demo-note]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            activeNoteId = (btn as HTMLElement).dataset.demoNote!;
+            setRoute("notes");
+          });
+        });
+        stageMain.querySelectorAll("[data-user-note]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            activeNoteId = (btn as HTMLElement).dataset.userNote!;
+            setRoute("notes");
+          });
+        });
+      };
+
+      paintResults();
+
       if (isTauri() && state.libraryRoot) {
-        await openLibraryIndex(state.libraryRoot);
-        const { invoke } = await import("@tauri-apps/api/core");
-        type IndexHit = {
-          hit_kind: string;
-          quote_id?: string;
-          book_slug?: string;
-          note_id?: string;
-          note_title?: string;
-          snippet: string;
-        };
-        const hits = (await invoke("index_search", { query: q, limit: 24 })) as IndexHit[];
-        const quoteHits = hits.filter((h) => h.hit_kind === "quote");
-        const noteHits = hits.filter((h) => h.hit_kind === "note");
-        if (quoteHits.length) {
-          parts.push(
-            `<section><h2 class="section-title">Vaše knihovna — citace</h2><ul class="quote-list">${quoteHits
-              .map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`)
-              .join("")}</ul></section>`,
-          );
-        }
-        if (noteHits.length) {
-          parts.push(
-            `<section><h2 class="section-title">Vaše knihovna — poznámky</h2><ul class="search-note-list">${noteHits
-              .map(
-                (h) =>
-                  `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(h.note_id ?? "")}"><span class="search-note-card__title">${escapeHtml(h.note_title ?? "Poznámka")}</span><span class="search-note-card__snippet">${escapeHtml(h.snippet)}</span></button></li>`,
-              )
-              .join("")}</ul></section>`,
-          );
+        try {
+          await openLibraryIndex(state.libraryRoot);
+          const { invoke } = await import("@tauri-apps/api/core");
+          type IndexHit = {
+            hit_kind: string;
+            quote_id?: string;
+            book_slug?: string;
+            note_id?: string;
+            note_title?: string;
+            snippet: string;
+          };
+          const hits = (await invoke("index_search", { query: q, limit: 24 })) as IndexHit[];
+          const quoteHits = hits.filter((h) => h.hit_kind === "quote");
+          const noteHits = hits.filter((h) => h.hit_kind === "note");
+          if (quoteHits.length) {
+            parts.push(
+              `<section><h2 class="section-title">Vaše knihovna — citace</h2><ul class="quote-list">${quoteHits
+                .map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`)
+                .join("")}</ul></section>`,
+            );
+          }
+          if (noteHits.length) {
+            parts.push(
+              `<section><h2 class="section-title">Vaše knihovna — poznámky</h2><ul class="search-note-list">${noteHits
+                .map(
+                  (h) =>
+                    `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(h.note_id ?? "")}"><span class="search-note-card__title">${escapeHtml(h.note_title ?? "Poznámka")}</span><span class="search-note-card__snippet">${escapeHtml(h.snippet)}</span></button></li>`,
+                )
+                .join("")}</ul></section>`,
+            );
+          }
+          paintResults();
+        } catch (err) {
+          console.error(err);
         }
       }
-      if (!parts.length) {
-        box.innerHTML = `<p class="muted">Nic nenalezeno.</p>`;
-        return;
-      }
-      box.innerHTML = parts.join("");
-      bindDemoNavigation();
-      stageMain.querySelectorAll("[data-demo-note]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          activeNoteId = (btn as HTMLElement).dataset.demoNote!;
-          setRoute("notes");
-        });
-      });
-      stageMain.querySelectorAll("[data-user-note]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          activeNoteId = (btn as HTMLElement).dataset.userNote!;
-          setRoute("notes");
-        });
-      });
     };
     input.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter") return;
@@ -634,6 +652,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     input.addEventListener("change", scheduleSearchFromInput);
     input.addEventListener("keyup", scheduleSearchFromInput);
     input.addEventListener("focus", scheduleSearchFromInput);
+    stageMain.querySelector("#btn-search-run")?.addEventListener("click", () => {
+      void runSearch(input.value.trim());
+    });
   };
 
   const renderSettings = () => {
@@ -944,6 +965,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   });
 
   await hydrateRecents();
+  if (isTauri() && (await loadDesktopDemoEnabled())) {
+    localStorage.setItem(DEMO_ENABLED_KEY, "1");
+  }
   let libraryRoot = localStorage.getItem("marginalia.libraryRoot") ?? "";
   if (isTauri()) {
     libraryRoot = (await loadDesktopLibraryRoot()) || libraryRoot;

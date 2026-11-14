@@ -4,6 +4,7 @@ import { isTauri } from "./runtime";
 const STORE = "marginalia-prefs.json";
 const KEY_LIBRARY = "libraryRoot";
 const KEY_RECENT = "recentBooks";
+const KEY_DEMO = "demoEnabled";
 
 let storePromise: ReturnType<typeof loadStore> | null = null;
 
@@ -50,5 +51,22 @@ export async function saveDesktopRecentBooks(books: LibraryBookEntry[]): Promise
   if (!isTauri()) return;
   const s = await store();
   await s.set(KEY_RECENT, books.slice(0, 24));
+  await s.save();
+}
+
+export async function loadDesktopDemoEnabled(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const s = await store();
+    return (await s.get<boolean>(KEY_DEMO)) === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveDesktopDemoEnabled(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  const s = await store();
+  await s.set(KEY_DEMO, enabled);
   await s.save();
 }

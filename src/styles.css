@@ -1176,8 +1176,18 @@ mark.quote-highlight,
   grid-template-rows: 1fr 1fr;
 }
 
-.notes-editor-pane .editor-root {
-  min-height: 10rem;
+.notes-editor-pane {
+  min-height: 12rem;
+}
+
+.search-field-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.search-field-row #search-input {
+  flex: 1;
 }
 
 .editor-root,
