@@ -1,5 +1,6 @@
 mod index;
 mod library;
+mod links;
 
 use index::IndexState;
 use std::path::Path;
@@ -37,6 +38,8 @@ pub fn run() {
             index::index_upsert_quote,
             index::index_remove_quote,
             index::index_search,
+            links::link_index_rebuild,
+            links::link_index_backlinks,
             library::sha256_file,
         ])
         .run(tauri::generate_context!())

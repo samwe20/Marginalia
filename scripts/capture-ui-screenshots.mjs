@@ -33,13 +33,18 @@ try {
 
   await page.screenshot({ path: join(artifacts, "demo-library-light.png"), fullPage: false });
 
+  await page.locator('.nav-item[data-route="notes"]').click();
+  await page.waitForSelector(".notes-layout");
+  await page.screenshot({ path: join(artifacts, "demo-notes-wikilinks-light.png"), fullPage: false });
+
   await page.locator('.nav-item[data-route="quotes"]').click();
   await page.waitForSelector(".quote-db-grid");
   await page.screenshot({ path: join(artifacts, "demo-quotes-db-light.png"), fullPage: false });
 
   await page.locator("[data-demo-quote='demo-q007']").click();
   await page.waitForSelector(".quote-detail__note");
-  await page.screenshot({ path: join(artifacts, "demo-quote-note-light.png"), fullPage: false });
+  await page.waitForSelector("#detail-backlinks .backlinks-list");
+  await page.screenshot({ path: join(artifacts, "demo-quote-note-backlinks-light.png"), fullPage: false });
 
   await page.locator("#btn-back-quotes").click();
   await page.locator('.nav-item[data-route="library"]').click();

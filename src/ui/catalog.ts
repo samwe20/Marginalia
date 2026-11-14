@@ -1,6 +1,5 @@
 import type { DemoBook, DemoQuote } from "../lib/demo-data";
 import { escapeAttr, escapeHtml, formatDateCs } from "../lib/html";
-import { renderMarkdownLite } from "../lib/markdown-lite";
 
 const COLOR_LABEL: Record<DemoQuote["color"], string> = {
   yellow: "Žlutá",
@@ -85,10 +84,11 @@ export function renderQuoteDetail(quote: DemoQuote, book: DemoBook | undefined):
         }
         ${
           quote.comment.trim()
-            ? `<section class="quote-detail__note"><h2>Osobní poznámka</h2><div class="md-body">${renderMarkdownLite(quote.comment)}</div></section>`
+            ? `<section class="quote-detail__note"><h2>Osobní poznámka</h2><div class="md-body preview-root" id="quote-comment-md"></div></section>`
             : `<p class="muted">K této citaci zatím není poznámka.</p>`
         }
       </article>
+      <aside class="detail-backlinks backlinks-pane" id="detail-backlinks" aria-label="Zpětné odkazy"></aside>
     </div>`;
 }
 
@@ -113,6 +113,7 @@ export function renderBookDetailPage(book: DemoBook, quotes: DemoQuote[]): strin
         <div class="quote-db-grid">
           ${quotes.length ? quotes.map((q) => renderQuoteDbCard(q, book, { showBook: false })).join("") : `<p class="muted">Žádné citace.</p>`}
         </div>
+        <aside class="detail-backlinks backlinks-pane" id="detail-backlinks" aria-label="Zpětné odkazy"></aside>
       </div>
     </div>`;
 }

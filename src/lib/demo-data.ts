@@ -28,9 +28,19 @@ export interface DemoQuote {
   comment: string;
 }
 
+export interface DemoNote {
+  id: string;
+  title: string;
+  filename: string;
+  body: string;
+  created: string;
+  updated: string;
+}
+
 export interface DemoPayload {
   books: DemoBook[];
   quotes: DemoQuote[];
+  notes: DemoNote[];
 }
 
 /** Public-domain or clearly labeled demo passages — no false attribution. */
@@ -383,7 +393,46 @@ export function buildDemoPayload(): DemoPayload {
     },
   ].filter((q, i, arr) => arr.findIndex((x) => x.id === q.id) === i) as DemoQuote[];
 
-  return { books, quotes };
+  const notes: DemoNote[] = [
+    {
+      id: "demo-note-reading",
+      title: "Čtenářský deník",
+      filename: "ctenarsky-denik.md",
+      created: "2025-11-10T09:00:00.000Z",
+      updated: "2025-11-12T11:30:00.000Z",
+      body: `# Čtenářský deník
+
+Propojené knihy: [[Anna Kareninová]], [[Babička]].
+
+- [[demo-q007]] — silná úvodní věta Tolstého
+- [[Hamlet]] — ověřit překlad „Být, či nebýt“
+`,
+    },
+    {
+      id: "demo-note-essay",
+      title: "Esej: ironie ve Folio",
+      filename: "esej-ironie.md",
+      created: "2025-11-11T14:00:00.000Z",
+      updated: "2025-11-13T08:15:00.000Z",
+      body: `## Návrat k [[Pýcha a předsudek]]
+
+Všiml jsem si paralely s [[demo-q001]] a s poznámkou u [[demo-q007]].
+
+Chci doplnit kapitolu o [[Osudy dobrého vojáka Švejka]].`,
+    },
+    {
+      id: "demo-note-open",
+      title: "Otevřené otázky",
+      filename: "otevrene-otazky.md",
+      created: "2025-11-13T19:00:00.000Z",
+      updated: "2025-11-13T19:00:00.000Z",
+      body: `Zatím neexistuje: [[Neexistující pojem]] — mělo by nabídnout vytvoření poznámky.
+
+Citace k dořešení: [[q013]] (mělo být [[demo-q013]]).`,
+    },
+  ];
+
+  return { books, quotes, notes };
 }
 
 export function isDemoEnabled(): boolean {
@@ -419,6 +468,10 @@ export function getDemoBooks(): DemoBook[] {
 
 export function getDemoQuotes(): DemoQuote[] {
   return loadDemoPayload()?.quotes ?? [];
+}
+
+export function getDemoNotes(): DemoNote[] {
+  return loadDemoPayload()?.notes ?? [];
 }
 
 export function getDemoBook(slug: string): DemoBook | undefined {

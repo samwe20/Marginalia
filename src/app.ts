@@ -28,9 +28,20 @@ import {
   renderQuoteDbCard,
   renderQuoteDetail,
 } from "./ui/catalog";
+import { NoteIndex } from "./lib/noteIndex";
+import { rebuildMarginaliaLinkIndex } from "./lib/marginalia-link-index";
+import {
+  createNoteFromTitle,
+  indexPathForDemoBook,
+  indexPathForDemoQuote,
+  openWikiTarget,
+} from "./lib/wiki-navigation";
+import { renderMarkdown } from "./lib/preview";
+import { renderFolioBacklinksPanel } from "./ui/folio-backlinks";
+import { renderNotesView } from "./ui/notes-view";
 import { mountToastRegion } from "./ui/toast";
 
-type Route = "library" | "quotes" | "search" | "settings" | "reader";
+type Route = "library" | "quotes" | "notes" | "search" | "settings" | "reader";
 
 interface RecentBook extends BookMeta {
   slug: string;
@@ -40,6 +51,7 @@ interface RecentBook extends BookMeta {
 const ROUTE_LABEL: Record<Exclude<Route, "reader">, string> = {
   library: "Knihovna",
   quotes: "Citace",
+  notes: "Poznámky",
   search: "Hledat",
   settings: "Nastavení",
 };
@@ -74,6 +86,34 @@ export async function bootApp(root: HTMLElement): Promise<void> {
 
   let pdf: PdfReader | null = null;
   let epub: EpubReader | null = null;
+  const linkIndex = new NoteIndex();
+  let activeNoteId: string | undefined;
+
+  const wikiHandlers = {
+    openBookDetail: (slug: string) => openBookDetail(slug),
+    openQuoteDetail: (id: string) => openQuoteDetail(id),
+    openNoteEditor: (noteId: string) => {
+      activeNoteId = noteId;
+      setRoute("notes");
+    },
+    createNoteWithTitle: async (title: string) => {
+      await createNoteFromTitle(state.libraryRoot, title, linkIndex, {
+        openNoteEditor: (id) => {
+          activeNoteId = id;
+          setRoute("notes");
+        },
+        toast,
+      });
+    },
+    toast,
+  };
+
+  const openWiki = (title: string, createIfMissing: boolean) =>
+    openWikiTarget(linkIndex, title, createIfMissing, wikiHandlers);
+
+  const reindexLinks = async () => {
+    await rebuildMarginaliaLinkIndex(linkIndex, state.libraryRoot);
+  };
 
   const sidebar = document.createElement("aside");
   sidebar.className = "sidebar";
@@ -90,6 +130,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     <div class="nav-list" role="navigation">
       <button type="button" class="nav-item" data-route="library"><span class="icon">${icons.library}</span><span>Knihovna</span></button>
       <button type="button" class="nav-item" data-route="quotes"><span class="icon">${icons.quotes}</span><span>Citace</span></button>
+      <button type="button" class="nav-item" data-route="notes"><span class="icon">${icons.notes}</span><span>Poznámky</span></button>
       <button type="button" class="nav-item" data-route="search"><span class="icon">${icons.search}</span><span>Hledat</span></button>
       <button type="button" class="nav-item" data-route="settings"><span class="icon">${icons.settings}</span><span>Nastavení</span></button>
     </div>
@@ -118,7 +159,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   stageMain.id = "stage-main";
 
   const inspector = document.createElement("aside");
-  inspector.className = "backlinks-pane";
+  inspector.className = "backlinks-pane reader-backlinks-pane";
   inspector.id = "inspector";
   inspector.innerHTML = `
     <div class="backlinks-header">
@@ -214,6 +255,15 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     setContextTitle(label);
     if (route === "library") renderLibrary();
     if (route === "quotes") renderQuotesOverview();
+    if (route === "notes") {
+      void renderNotesView(stageMain, {
+        libraryRoot: state.libraryRoot,
+        index: linkIndex,
+        theme: "light",
+        wiki: wikiHandlers,
+        onReindex: reindexLinks,
+      }, activeNoteId);
+    }
     if (route === "search") renderSearch();
     if (route === "settings") renderSettings();
     syncReadingChrome();
@@ -244,6 +294,8 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     stageMain.innerHTML = renderBookDetailPage(book, quotes);
     stageMain.querySelector("#btn-back-library-detail")?.addEventListener("click", () => setRoute("library"));
     bindDemoNavigation();
+    const bl = stageMain.querySelector("#detail-backlinks") as HTMLElement | null;
+    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoBook(slug), linkIndex, openWiki);
     syncReadingChrome();
   };
 
@@ -256,6 +308,18 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     setContextTitle("Citace");
     stageMain.innerHTML = renderQuoteDetail(quote, book);
     stageMain.querySelector("#btn-back-quotes")?.addEventListener("click", () => setRoute("quotes"));
+    const mdHost = stageMain.querySelector("#quote-comment-md") as HTMLElement | null;
+    if (mdHost && quote.comment.trim()) {
+      mdHost.innerHTML = renderMarkdown(quote.comment, linkIndex, { allowRemoteImages: false });
+      mdHost.querySelectorAll("a[data-wiki-title]").forEach((a) => {
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          openWiki((a as HTMLElement).dataset.wikiTitle!, true);
+        });
+      });
+    }
+    const bl = stageMain.querySelector("#detail-backlinks") as HTMLElement | null;
+    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoQuote(id), linkIndex, openWiki);
     syncReadingChrome();
   };
 
@@ -471,14 +535,17 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary());
     stageMain.querySelector("#btn-demo-load")?.addEventListener("click", () => {
       enableDemoData();
+      void reindexLinks();
       toast("Ukázková data načtena", "success");
       if (state.libraryRoot) setLibraryPath(state.libraryRoot, state.libraryRoot);
       else setLibraryPath("Ukázková knihovna aktivní");
       renderSettings();
       if (state.route === "library") renderLibrary();
+      if (state.route === "notes") setRoute("notes");
     });
     stageMain.querySelector("#btn-demo-remove")?.addEventListener("click", () => {
       disableDemoData();
+      void reindexLinks();
       state.quotesFilterBook = "";
       state.quotesFilterTag = "";
       state.quotesFilterText = "";
@@ -488,6 +555,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       renderSettings();
       if (state.route === "library") renderLibrary();
       if (state.route === "quotes") renderQuotesOverview();
+      if (state.route === "notes") setRoute("notes");
     });
   };
 
@@ -658,7 +726,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     setLibraryPath(state.libraryRoot, state.libraryRoot);
   }
 
-  setRoute("library");
+  void reindexLinks().then(() => setRoute("library"));
 }
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
