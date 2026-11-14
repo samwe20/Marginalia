@@ -24,11 +24,13 @@ Output: `src-tauri/target/release/bundle/nsis/`.
 
 ## Instalace testovací verze
 
-Na větvi `develop` po úspěšném běhu CI najdete instalační `.exe` v artefaktu workflow **Marginalia checks** (job `windows-build`, artefakt `marginalia-windows-installer`, platnost cca 30 dní).
+Po pushi na `develop` CI zveřejní instalační soubor jako **předběžné vydání** (`develop-latest`, pouze test build, není „latest“):
 
-1. Otevřete příslušný běh v GitHub Actions u pushnutého commitu na `develop`.
-2. Stáhněte artefakt `marginalia-windows-installer` (soubor NSIS `*-setup.exe`).
-3. Spusťte instalátor. U nepodepsané sestavy Windows může zobrazit SmartScreen — zvolte **Další informace** → **Přesto spustit**.
+`https://github.com/samwe20/Marginalia/releases/download/develop-latest/Marginalia-<verze>-test-<krátký-sha>-setup.exe`
+
+Název se mění s každým buildem (verze z `package.json` / `tauri.conf.json`, SHA z commitu). Aktuální přímý odkaz je v release [develop-latest](https://github.com/samwe20/Marginalia/releases/tag/develop-latest) u assetu `Marginalia-*-test-*-setup.exe`.
+
+U nepodepsané sestavy Windows může SmartScreen zobrazit varování — **Další informace** → **Přesto spustit**.
 
 ## Library layout
 

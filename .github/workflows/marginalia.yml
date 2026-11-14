@@ -58,6 +58,11 @@ jobs:
     permissions:
       contents: read
       actions: write
+    outputs:
+      installer_file: ${{ steps.installer.outputs.file_name }}
+      installer_artifact: ${{ steps.installer.outputs.artifact_name }}
+      version: ${{ steps.installer.outputs.version }}
+      short_sha: ${{ steps.installer.outputs.short_sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -70,9 +75,56 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
       - run: npm run desktop:build -- --bundles nsis
+      - name: Name installer for test build
+        id: installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $fileName = "Marginalia-$version-test-$shortSha-setup.exe"
+          $setup = Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "NSIS setup missing" }
+          Copy-Item $setup.FullName $fileName
+          $artifactName = "marginalia-windows-installer-$version-test-$shortSha"
+          "file_name=$fileName" >> $env:GITHUB_OUTPUT
+          "artifact_name=$artifactName" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: marginalia-windows-installer
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          name: ${{ steps.installer.outputs.artifact_name }}
+          path: ${{ steps.installer.outputs.file_name }}
           retention-days: 30
           if-no-files-found: error
+  windows-develop-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: windows-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.windows-build.outputs.installer_artifact }}
+          path: installer
+      - name: Publish rolling develop prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLER_FILE: ${{ needs.windows-build.outputs.installer_file }}
+          APP_VERSION: ${{ needs.windows-build.outputs.version }}
+        run: |
+          set -euo pipefail
+          TITLE="Marginália ${APP_VERSION} test (develop)"
+          NOTES="Test build from develop @ ${{ github.sha }}"
+          ASSET="installer/${INSTALLER_FILE}"
+          test -f "$ASSET"
+          if gh release view develop-latest >/dev/null 2>&1; then
+            gh release edit develop-latest --prerelease --title "$TITLE" --notes "$NOTES"
+            gh release upload develop-latest "$ASSET" --clobber
+          else
+            gh release create develop-latest "$ASSET" \
+              --prerelease \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --target "${{ github.sha }}"
+          fi
