@@ -197,6 +197,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(400);
       const input = await $("#search-input");
       await input.setValue("Dickens");
+      await browser.keys(["Enter"]);
       await browser.pause(1200);
       const hits = await $("#search-results .quote-db-card, #search-results .search-note-card");
       await expect(hits).toBeDisplayed();

@@ -18,6 +18,12 @@ import {
 import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
+import {
+  loadDesktopLibraryRoot,
+  loadDesktopRecentBooks,
+  saveDesktopLibraryRoot,
+  saveDesktopRecentBooks,
+} from "./lib/desktop-prefs";
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
@@ -85,8 +91,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     statusEl.textContent = msg;
   };
 
+  let recentBooksCache: RecentBook[] = [];
+
   const state = {
-    libraryRoot: localStorage.getItem("marginalia.libraryRoot") ?? "",
+    libraryRoot: "",
     mode: "highlight" as HighlightMode,
     book: null as BookMeta | null,
     slug: "",
@@ -224,18 +232,30 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     backlinksBtn.dataset.active = String(state.inspectorOpen);
   };
 
-  const getRecentBooks = (): RecentBook[] => {
+  const getRecentBooks = (): RecentBook[] => recentBooksCache;
+
+  const hydrateRecents = async () => {
+    let fromLs: RecentBook[] = [];
     try {
-      return JSON.parse(localStorage.getItem("marginalia.recentBooks") ?? "[]") as RecentBook[];
+      fromLs = JSON.parse(localStorage.getItem("marginalia.recentBooks") ?? "[]") as RecentBook[];
     } catch {
-      return [];
+      fromLs = [];
+    }
+    if (isTauri()) {
+      const fromStore = await loadDesktopRecentBooks();
+      recentBooksCache = mergeLibraryEntries(fromLs, fromStore);
+    } else {
+      recentBooksCache = fromLs;
     }
   };
 
   const pushRecent = (book: RecentBook) => {
     const list = getRecentBooks().filter((b) => b.slug !== book.slug);
     list.unshift({ ...book, updated: book.updated || new Date().toISOString() });
-    localStorage.setItem("marginalia.recentBooks", JSON.stringify(list.slice(0, 24)));
+    recentBooksCache = list.slice(0, 24);
+    localStorage.setItem("marginalia.recentBooks", JSON.stringify(recentBooksCache));
+    void saveDesktopRecentBooks(recentBooksCache);
+    if (state.libraryRoot) void saveDesktopLibraryRoot(state.libraryRoot);
   };
 
   const listBooksForLibrary = async (): Promise<RecentBook[]> => {
@@ -243,6 +263,16 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (!isTauri() || !state.libraryRoot) return recent;
     const onDisk = await listLibraryBooksFromDisk(state.libraryRoot);
     return mergeLibraryEntries(recent, onDisk);
+  };
+
+  const setLibraryRoot = async (libraryRoot: string) => {
+    state.libraryRoot = libraryRoot;
+    localStorage.setItem("marginalia.libraryRoot", libraryRoot);
+    if (isTauri() && libraryRoot) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("allow_library_path", { path: libraryRoot });
+      await saveDesktopLibraryRoot(libraryRoot);
+    }
   };
 
   const renderInspectorQuotes = (quotes: { quoteText: string; page: string }[]) => {
@@ -596,10 +626,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (ev.key !== "Enter") return;
       void runSearch(input.value.trim());
     });
-    input.addEventListener("input", () => {
+    const scheduleSearchFromInput = () => {
       const q = input.value.trim();
       if (q.length >= 2) void runSearch(q);
-    });
+    };
+    input.addEventListener("input", scheduleSearchFromInput);
+    input.addEventListener("change", scheduleSearchFromInput);
+    input.addEventListener("keyup", scheduleSearchFromInput);
+    input.addEventListener("focus", scheduleSearchFromInput);
   };
 
   const renderSettings = () => {
@@ -674,10 +708,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string") {
-        state.libraryRoot = selected;
-        localStorage.setItem("marginalia.libraryRoot", selected);
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("allow_library_path", { path: selected });
+        await setLibraryRoot(selected);
         await openLibraryIndex(selected);
         setLibraryPath(selected, selected);
         setStatus(`Knihovna: ${selected}`);
@@ -849,10 +880,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("allow_library_path", { path: libraryRoot });
-    state.libraryRoot = libraryRoot;
-    localStorage.setItem("marginalia.libraryRoot", libraryRoot);
+    await setLibraryRoot(libraryRoot);
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const bytes = await readFile(filePath);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -915,11 +943,19 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   });
 
-  if (state.libraryRoot) {
-    if (isTauri()) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("allow_library_path", { path: state.libraryRoot });
+  await hydrateRecents();
+  let libraryRoot = localStorage.getItem("marginalia.libraryRoot") ?? "";
+  if (isTauri()) {
+    libraryRoot = (await loadDesktopLibraryRoot()) || libraryRoot;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
+    if (!libraryRoot && smokeOn) {
+      const fixtures = (await invoke("smoke_fixture_paths")) as { library_root: string | null };
+      if (fixtures.library_root) libraryRoot = fixtures.library_root;
     }
+  }
+  if (libraryRoot) {
+    await setLibraryRoot(libraryRoot);
     void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
   }

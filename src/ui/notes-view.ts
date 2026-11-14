@@ -22,6 +22,21 @@ export async function renderNotesView(
   ctx: NotesViewContext,
   activeNoteId?: string,
 ): Promise<void> {
+  stageMain.innerHTML = `
+      <div class="notes-layout" data-notes-loading="1">
+        <aside class="notes-list">
+          <div class="notes-list__header">
+            <h2 class="section-title">Poznámky</h2>
+          </div>
+          <p class="muted notes-list__items">Načítání…</p>
+        </aside>
+        <div class="notes-editor-pane">
+          <div id="editor-root" class="editor-root"></div>
+          <div id="preview-root" class="preview-root preview-pane-inline" tabindex="0" aria-label="Náhled"></div>
+        </div>
+        <aside class="backlinks-pane notes-backlinks" id="note-backlinks-pane"></aside>
+      </div>
+    `;
   const userNotes = await listNotes(ctx.libraryRoot);
   const demoNotes = isDemoEnabled() ? getDemoNotes() : [];
   const all: LibraryNote[] = [
@@ -40,7 +55,7 @@ export async function renderNotesView(
 
   const paint = () => {
     stageMain.innerHTML = `
-      <div class="notes-layout">
+      <div class="notes-layout" data-notes-ready="1">
         <aside class="notes-list">
           <div class="notes-list__header">
             <h2 class="section-title">Poznámky</h2>
