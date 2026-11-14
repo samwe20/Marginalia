@@ -1,0 +1,54 @@
+/* Design tokens aligned with Folio (https://github.com/samwe20/Folio). */
+:root {
+  --font-body: "Literata Variable", Literata, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  --font-ui: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+.app {
+  --bg: #f3efe4;
+  --bg-elevated: #fbf8f1;
+  --panel: #e7e1d4;
+  --panel-strong: #ddd6c6;
+  --paper: #f7f4ea;
+  --ink: #2c2a26;
+  --muted: #6f6a60;
+  --faint: #9a9488;
+  --border: rgba(60, 50, 30, 0.12);
+  --accent: #3d5a73;
+  --accent-soft: rgba(61, 90, 115, 0.12);
+  --warn: #b86b2b;
+  --shadow: 0 18px 50px rgba(44, 42, 38, 0.1);
+  --stage-glow: var(--paper);
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --sidebar-width: 220px;
+  --backlinks-width: 292px;
+  --titlebar-height: 0px;
+  --highlight: rgba(184, 107, 43, 0.28);
+  --highlight-active: rgba(184, 107, 43, 0.42);
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.app[data-theme="dark"] {
+  --bg: #000000;
+  --bg-elevated: #121212;
+  --panel: #070707;
+  --panel-strong: #161616;
+  --paper: #000000;
+  --ink: #e8e8e8;
+  --muted: #8a8a8a;
+  --faint: #555555;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #c5cdd6;
+  --accent-soft: rgba(255, 255, 255, 0.07);
+  --warn: #c9a07a;
+  --shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+  --stage-glow: #000000;
+  --highlight: rgba(201, 160, 122, 0.32);
+  --highlight-active: rgba(201, 160, 122, 0.48);
+}
