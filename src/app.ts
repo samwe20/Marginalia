@@ -9,7 +9,25 @@ import {
 import { isTauri } from "./lib/runtime";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
+import {
+  disableDemoData,
+  enableDemoData,
+  getDemoBook,
+  getDemoBooks,
+  getDemoQuote,
+  getDemoQuotes,
+  getDemoQuotesForBook,
+  isDemoEnabled,
+  searchDemoQuotes,
+} from "./lib/demo-data";
+import { escapeAttr, escapeHtml } from "./lib/html";
 import { icons } from "./ui/icons";
+import {
+  renderBookDetailPage,
+  renderDemoBookCard,
+  renderQuoteDbCard,
+  renderQuoteDetail,
+} from "./ui/catalog";
 import { mountToastRegion } from "./ui/toast";
 
 type Route = "library" | "quotes" | "search" | "settings" | "reader";
@@ -47,6 +65,11 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     slug: "",
     route: "library" as Route,
     inspectorOpen: true,
+    detailBookSlug: null as string | null,
+    detailQuoteId: null as string | null,
+    quotesFilterBook: "",
+    quotesFilterTag: "",
+    quotesFilterText: "",
   };
 
   let pdf: PdfReader | null = null;
@@ -172,6 +195,8 @@ export async function bootApp(root: HTMLElement): Promise<void> {
         (btn as HTMLElement).dataset.route === route ? "page" : "false",
       );
     });
+    state.detailBookSlug = null;
+    state.detailQuoteId = null;
     if (route === "reader" && state.book) {
       setContextTitle(state.book.title);
       return;
@@ -184,8 +209,55 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     if (route === "settings") renderSettings();
   };
 
+  const bindDemoNavigation = () => {
+    stageMain.querySelectorAll("[data-demo-book]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const slug = (el as HTMLElement).dataset.demoBook!;
+        openBookDetail(slug);
+      });
+    });
+    stageMain.querySelectorAll("[data-demo-quote]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const id = (el as HTMLElement).dataset.demoQuote!;
+        openQuoteDetail(id);
+      });
+    });
+  };
+
+  const openBookDetail = (slug: string) => {
+    const book = getDemoBook(slug);
+    if (!book) return;
+    state.detailBookSlug = slug;
+    state.route = "library";
+    setContextTitle(book.title);
+    const quotes = getDemoQuotesForBook(slug);
+    stageMain.innerHTML = renderBookDetailPage(book, quotes);
+    stageMain.querySelector("#btn-back-library-detail")?.addEventListener("click", () => setRoute("library"));
+    bindDemoNavigation();
+    state.inspectorOpen = true;
+    syncInspectorChrome();
+    renderInspectorQuotes(
+      quotes.map((q) => ({ quoteText: q.quoteText, page: q.page })),
+    );
+  };
+
+  const openQuoteDetail = (id: string) => {
+    const quote = getDemoQuote(id);
+    if (!quote) return;
+    const book = getDemoBook(quote.bookSlug);
+    state.detailQuoteId = id;
+    state.route = "quotes";
+    setContextTitle("Citace");
+    stageMain.innerHTML = renderQuoteDetail(quote, book);
+    stageMain.querySelector("#btn-back-quotes")?.addEventListener("click", () => setRoute("quotes"));
+    state.inspectorOpen = true;
+    syncInspectorChrome();
+    renderInspectorQuotes([{ quoteText: quote.quoteText, page: quote.page }]);
+  };
+
   const renderLibrary = () => {
     const recent = getRecentBooks();
+    const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
@@ -198,18 +270,31 @@ export async function bootApp(root: HTMLElement): Promise<void> {
           Přetáhněte sem PDF nebo EPUB
         </div>
         ${
+          demoBooks.length
+            ? `<section class="library-section">
+          <h2 class="section-title">Ukázková knihovna</h2>
+          <p class="muted section-hint">Vizuální náhled — data jsou oddělená od vašich souborů.</p>
+          <div class="book-grid book-grid--demo">${demoBooks.map((b) => renderDemoBookCard(b)).join("")}</div>
+        </section>`
+            : ""
+        }
+        ${
           recent.length
-            ? `<div class="book-grid">${recent
+            ? `<section class="library-section">
+            <h2 class="section-title">Nedávno otevřené</h2>
+            <div class="book-grid">${recent
                 .map(
                   (b) => `
               <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}" title="${escapeAttr(b.title)}">
-                <div class="book-card__cover">${escapeHtml(b.title.slice(0, 1).toUpperCase())}</div>
+                <div class="book-card__cover book-card__cover--letter">${escapeHtml(b.title.slice(0, 1).toUpperCase())}</div>
                 <div class="book-card__title">${escapeHtml(b.title)}</div>
                 <div class="book-card__meta">${b.kind.toUpperCase()}</div>
               </button>`,
                 )
-                .join("")}</div>`
-            : `<p class="muted">Knihovna je prázdná — začněte otevřením knihy.</p>`
+                .join("")}</div></section>`
+            : demoBooks.length
+              ? ""
+              : `<p class="muted">Knihovna je prázdná — začněte otevřením knihy nebo načtěte ukázková data v Nastavení.</p>`
         }
       </div>
     `;
@@ -228,20 +313,75 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       const file = (e as DragEvent).dataTransfer?.files?.[0];
       if (file) void openBookFile(file);
     });
-    stageMain.querySelectorAll(".book-card").forEach((card) => {
+    stageMain.querySelectorAll(".book-card:not(.book-card--demo)").forEach((card) => {
       card.addEventListener("click", () => {
         toast("Znovu otevřete knihu přes Otevřít knihu… (prototype bez cache souboru).", "info");
       });
     });
+    bindDemoNavigation();
   };
 
   const renderQuotesOverview = () => {
+    if (!isDemoEnabled()) {
+      stageMain.innerHTML = `
+        <div class="page">
+          <h1>Databáze citací</h1>
+          <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
+        </div>`;
+      return;
+    }
+    const books = getDemoBooks();
+    const allTags = [...new Set(getDemoQuotes().flatMap((q) => q.tags))].sort();
+    let quotes = getDemoQuotes();
+    if (state.quotesFilterBook) quotes = quotes.filter((q) => q.bookSlug === state.quotesFilterBook);
+    if (state.quotesFilterTag) quotes = quotes.filter((q) => q.tags.includes(state.quotesFilterTag));
+    if (state.quotesFilterText.trim()) {
+      const ids = new Set(searchDemoQuotes(state.quotesFilterText).map((q) => q.id));
+      quotes = quotes.filter((q) => ids.has(q.id));
+    }
+    const bookMap = new Map(books.map((b) => [b.slug, b]));
     stageMain.innerHTML = `
-      <div class="page">
-        <h1>Citace</h1>
-        <p class="muted">Přehled všech citací přibude v další iteraci. Zatím uvidíte citace aktivní knihy v panelu vpravo.</p>
-      </div>
-    `;
+      <div class="page page--wide">
+        <h1>Databáze citací</h1>
+        <p class="muted">Ukázkové citace a poznámky — filtrujte podle knihy, štítku nebo textu.</p>
+        <div class="filters-bar">
+          <label class="field field--inline">
+            <span>Knihy</span>
+            <select id="filter-book">
+              <option value="">Všechny knihy</option>
+              ${books.map((b) => `<option value="${escapeAttr(b.slug)}" ${state.quotesFilterBook === b.slug ? "selected" : ""}>${escapeHtml(b.title)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field field--inline">
+            <span>Hledat v citacích</span>
+            <input type="search" id="filter-text" value="${escapeAttr(state.quotesFilterText)}" placeholder="Text citace nebo poznámky…" />
+          </label>
+        </div>
+        <div class="tag-row tag-row--filter" role="group" aria-label="Filtr štítků">
+          <button type="button" class="tag-chip tag-chip--btn ${state.quotesFilterTag === "" ? "tag-chip--on" : ""}" data-tag="">Vše</button>
+          ${allTags.map((t) => `<button type="button" class="tag-chip tag-chip--btn ${state.quotesFilterTag === t ? "tag-chip--on" : ""}" data-tag="${escapeAttr(t)}">${escapeHtml(t)}</button>`).join("")}
+        </div>
+        <p class="muted results-count">${quotes.length} citací</p>
+        <div class="quote-db-grid">
+          ${quotes.map((q) => renderQuoteDbCard(q, bookMap.get(q.bookSlug))).join("")}
+        </div>
+      </div>`;
+    const rerender = () => renderQuotesOverview();
+    stageMain.querySelector<HTMLSelectElement>("#filter-book")?.addEventListener("change", (ev) => {
+      state.quotesFilterBook = (ev.target as HTMLSelectElement).value;
+      rerender();
+    });
+    stageMain.querySelector<HTMLInputElement>("#filter-text")?.addEventListener("input", (ev) => {
+      state.quotesFilterText = (ev.target as HTMLInputElement).value;
+      rerender();
+    });
+    stageMain.querySelectorAll(".tag-chip--btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.quotesFilterTag = (btn as HTMLElement).dataset.tag ?? "";
+        rerender();
+      });
+    });
+    bindDemoNavigation();
   };
 
   const renderSearch = () => {
@@ -257,28 +397,55 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     `;
     const input = stageMain.querySelector<HTMLInputElement>("#search-input")!;
     input.focus();
-    input.addEventListener("keydown", async (ev) => {
-      if (ev.key !== "Enter") return;
-      const q = input.value.trim();
+    const runSearch = async (q: string) => {
       const box = stageMain.querySelector("#search-results")!;
       if (!q) {
         box.innerHTML = "";
         return;
       }
-      if (!isTauri()) {
-        box.innerHTML = `<p class="muted">Vyhledávání vyžaduje desktop aplikaci.</p>`;
+      const parts: string[] = [];
+      if (isDemoEnabled()) {
+        const demoHits = searchDemoQuotes(q);
+        if (demoHits.length) {
+          const bookMap = new Map(getDemoBooks().map((b) => [b.slug, b]));
+          parts.push(
+            `<section><h2 class="section-title">Ukázková data</h2><div class="quote-db-grid">${demoHits
+              .map((hit) => renderQuoteDbCard(hit, bookMap.get(hit.bookSlug)))
+              .join("")}</div></section>`,
+          );
+        }
+      }
+      if (isTauri() && state.libraryRoot) {
+        await openLibraryIndex();
+        const { invoke } = await import("@tauri-apps/api/core");
+        const hits = (await invoke("index_search", { query: q, limit: 20 })) as { snippet: string }[];
+        if (hits.length) {
+          parts.push(
+            `<section><h2 class="section-title">Vaše knihovna</h2><ul class="quote-list">${hits
+              .map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`)
+              .join("")}</ul></section>`,
+          );
+        }
+      }
+      if (!parts.length) {
+        box.innerHTML = `<p class="muted">Nic nenalezeno.</p>`;
         return;
       }
-      await openLibraryIndex();
-      const { invoke } = await import("@tauri-apps/api/core");
-      const hits = (await invoke("index_search", { query: q, limit: 20 })) as { snippet: string }[];
-      box.innerHTML = hits.length
-        ? `<ul class="quote-list">${hits.map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`).join("")}</ul>`
-        : `<p class="muted">Nic nenalezeno.</p>`;
+      box.innerHTML = parts.join("");
+      bindDemoNavigation();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      void runSearch(input.value.trim());
+    });
+    input.addEventListener("input", () => {
+      const q = input.value.trim();
+      if (q.length >= 2 && isDemoEnabled()) void runSearch(q);
     });
   };
 
   const renderSettings = () => {
+    const demoOn = isDemoEnabled();
     stageMain.innerHTML = `
       <div class="page">
         <h1>Nastavení</h1>
@@ -287,9 +454,37 @@ export async function bootApp(root: HTMLElement): Promise<void> {
           <button type="button" class="primary-btn" id="btn-settings-library">Vybrat složku knihovny…</button>
         </div>
         <p class="muted"><strong>Aktuální cesta:</strong> ${escapeHtml(state.libraryRoot || "—")}</p>
+        <hr class="settings-sep" />
+        <h2 class="section-title">Ukázková data</h2>
+        <p class="muted">Ukázka knihovny, citací a poznámek pro náhled UI. Data zůstávají v aplikaci a <strong>nemíchejí se</strong> s vašimi soubory na disku.</p>
+        <div class="page-actions">
+          <button type="button" class="primary-btn" id="btn-demo-load" ${demoOn ? "disabled" : ""}>Načíst ukázková data</button>
+          <button type="button" class="ghost-btn solid" id="btn-demo-remove" ${demoOn ? "" : "disabled"}>Odstranit ukázková data</button>
+        </div>
+        <p class="muted">Stav: ${demoOn ? "ukázková data jsou aktivní" : "vypnuto (výchozí)"}</p>
       </div>
     `;
     stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary());
+    stageMain.querySelector("#btn-demo-load")?.addEventListener("click", () => {
+      enableDemoData();
+      toast("Ukázková data načtena", "success");
+      if (state.libraryRoot) setLibraryPath(state.libraryRoot, state.libraryRoot);
+      else setLibraryPath("Ukázková knihovna aktivní");
+      renderSettings();
+      if (state.route === "library") renderLibrary();
+    });
+    stageMain.querySelector("#btn-demo-remove")?.addEventListener("click", () => {
+      disableDemoData();
+      state.quotesFilterBook = "";
+      state.quotesFilterTag = "";
+      state.quotesFilterText = "";
+      toast("Ukázková data odstraněna", "info");
+      if (state.libraryRoot) setLibraryPath(state.libraryRoot, state.libraryRoot);
+      else setLibraryPath("Žádná knihovna");
+      renderSettings();
+      if (state.route === "library") renderLibrary();
+      if (state.route === "quotes") renderQuotesOverview();
+    });
   };
 
   const pickLibrary = async () => {
@@ -461,14 +656,6 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   syncInspectorChrome();
   setRoute("library");
   renderInspectorQuotes([]);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function escapeAttr(s: string): string {
-  return escapeHtml(s).replace(/"/g, "&quot;");
 }
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {

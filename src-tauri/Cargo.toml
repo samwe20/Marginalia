@@ -1,6 +1,6 @@
 [package]
 name = "marginalia"
-version = "0.1.0-prototype.2"
+version = "0.1.0-prototype.3"
 description = "Marginália — book highlights as Markdown quotes"
 authors = ["Marginália"]
 edition = "2021"
