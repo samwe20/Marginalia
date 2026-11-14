@@ -486,6 +486,12 @@ export function getDemoQuote(id: string): DemoQuote | undefined {
   return getDemoQuotes().find((q) => q.id === id);
 }
 
+export function searchDemoNotes(query: string): DemoNote[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return getDemoNotes().filter((n) => `${n.title}\n${n.body}`.toLowerCase().includes(q));
+}
+
 export function searchDemoQuotes(query: string): DemoQuote[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];

@@ -863,6 +863,45 @@ input {
   color-scheme: dark;
 }
 
+.search-note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.search-note-card {
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.search-note-card:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.search-note-card__title {
+  display: block;
+  font-weight: 650;
+  font-size: 0.92rem;
+  margin-bottom: 0.25rem;
+}
+
+.search-note-card__snippet {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .quote-list {
   list-style: none;
   margin: 0;

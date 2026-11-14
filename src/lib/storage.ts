@@ -7,6 +7,7 @@ import {
   parseQuoteMarkdown,
   type QuoteDocument,
 } from "./quote-markdown";
+import { rebuildNotesSearchIndex } from "./note-search-index";
 import { isTauri } from "./runtime";
 
 export interface BookMeta {
@@ -119,8 +120,9 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
   return docs;
 }
 
-export async function openLibraryIndex(): Promise<void> {
+export async function openLibraryIndex(libraryRoot?: string): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("index_open");
+  if (libraryRoot) await rebuildNotesSearchIndex(libraryRoot);
 }
