@@ -1,12 +1,11 @@
 import * as pdfjs from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist/build/pdf.mjs";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import "pdfjs-dist/web/pdf_viewer.css";
 import { anchorFromPdfSelection, getPdfPosition, getTextQuote, reanchorInText } from "../lib/anchor";
 import { attachHighlighter, rangeToOffsets, type HighlightMode } from "../lib/highlighter";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export interface PdfReaderOptions {
   container: HTMLElement;
@@ -24,10 +23,21 @@ export class PdfReader {
 
   async load(data: ArrayBuffer): Promise<void> {
     this.destroy();
-    const task = pdfjs.getDocument({ data: data.slice(0) });
+    this.opts.container.dataset.pdfTextReady = "0";
+    const task = pdfjs.getDocument({ data: data.slice(0), useSystemFonts: true });
     this.pdf = await task.promise;
     await this.renderAll();
     this.wireHighlighter();
+    this.opts.container.dataset.pdfTextReady = this.hasSelectableText() ? "1" : "0";
+  }
+
+  private hasSelectableText(): boolean {
+    for (const layer of this.pageRoots.values()) {
+      for (const span of layer.querySelectorAll("span")) {
+        if ((span.textContent ?? "").trim().length > 0) return true;
+      }
+    }
+    return false;
   }
 
   private async renderAll(): Promise<void> {
@@ -48,8 +58,7 @@ export class PdfReader {
 
       const textLayer = document.createElement("div");
       textLayer.className = "textLayer";
-      textLayer.style.width = `${viewport.width}px`;
-      textLayer.style.height = `${viewport.height}px`;
+      textLayer.style.setProperty("--scale-factor", String(viewport.scale));
 
       const text = await page.getTextContent();
       const layer = new TextLayer({

@@ -18,7 +18,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
-      - run: npm audit --audit-level=high
+      # WDIO/desktop smoke is dev-only; audit runtime deps shipped in the installer.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
@@ -107,9 +108,51 @@ jobs:
           path: ${{ steps.installer.outputs.file_name }}
           retention-days: 30
           if-no-files-found: error
+  windows-installed-smoke:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    needs: windows-build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.windows-build.outputs.installer_artifact }}
+          path: installer
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - name: Install tauri-driver
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - run: npm ci
+      - name: Installed NSIS app — WebdriverIO smoke
+        shell: pwsh
+        env:
+          INSTALLER_PATH: installer/${{ needs.windows-build.outputs.installer_file }}
+        run: |
+          winget install --id gerardog.gsudo --exact --version 2.6.1 --source winget --installer-type wix --silent --accept-package-agreements --accept-source-agreements
+          $gsudo = "$env:ProgramFiles\gsudo\Current\gsudo.exe"
+          if (-not (Test-Path $gsudo)) { throw "gsudo not found at $gsudo" }
+          $smoke = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/windows-installed-smoke.ps1"
+          & $gsudo --direct --integrity Medium pwsh -NoProfile -ExecutionPolicy Bypass -File $smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: desktop-smoke-${{ needs.windows-build.outputs.short_sha }}
+          path: test-results/desktop-smoke
+          if-no-files-found: warn
   windows-develop-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    needs: windows-build
+    needs: [windows-build, windows-installed-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write

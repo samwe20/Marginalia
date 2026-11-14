@@ -101,7 +101,7 @@ Verze pod stromem: **0.1.0-prototype.4** (`develop`).
 | `rust-tests-windows` | stejné na `windows-latest` |
 | `windows-build` | Sestavení installeru (ne E2E desktopu) |
 
-**Desktop E2E** (WebdriverIO + `tauri-driver`) je plán na později — v CI zatím web parita + Rust integrace.
+**Desktop E2E** (nainstalovaná NSIS app, WebdriverIO + `tauri-driver` na `windows-installed-smoke`) **gateuje** publish `develop-latest`. Web Playwright zůstává jen parita UI.
 
 ## Spuštění lokálně
 

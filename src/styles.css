@@ -827,6 +827,24 @@ input {
   line-height: 1.7;
 }
 
+.pdf-page {
+  position: relative;
+  margin: 0 auto 1.25rem;
+  width: fit-content;
+  line-height: 0;
+}
+
+.pdf-page canvas {
+  display: block;
+  pointer-events: none;
+}
+
+.pdf-page .textLayer {
+  z-index: 2;
+  user-select: text;
+  pointer-events: auto;
+}
+
 /* Search & settings */
 .field {
   display: flex;
@@ -842,6 +860,18 @@ input {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
+}
+
+.theme-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+
+.theme-picker__btn--on {
+  background: var(--accent-soft);
+  color: var(--ink);
 }
 
 .field input {
@@ -933,10 +963,6 @@ input {
 }
 
 /* Highlights */
-.textLayer span {
-  color: transparent;
-}
-
 mark.quote-highlight,
 .quote-highlight {
   background: var(--highlight) !important;
@@ -1148,6 +1174,20 @@ mark.quote-highlight,
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr 1fr;
+}
+
+.notes-editor-pane {
+  min-height: 12rem;
+}
+
+.search-field-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.search-field-row #search-input {
+  flex: 1;
 }
 
 .editor-root,

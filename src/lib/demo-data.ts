@@ -1,4 +1,5 @@
 import type { QuoteDocument } from "./quote-markdown";
+import { isTauri } from "./runtime";
 
 export const DEMO_STORAGE_KEY = "marginalia.demo.v1";
 export const DEMO_ENABLED_KEY = "marginalia.demo.enabled";
@@ -454,12 +455,18 @@ export function enableDemoData(): DemoPayload {
   const payload = buildDemoPayload();
   localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(payload));
   localStorage.setItem(DEMO_ENABLED_KEY, "1");
+  if (isTauri()) {
+    void import("./desktop-prefs").then(({ saveDesktopDemoEnabled }) => saveDesktopDemoEnabled(true));
+  }
   return payload;
 }
 
 export function disableDemoData(): void {
   localStorage.removeItem(DEMO_STORAGE_KEY);
   localStorage.removeItem(DEMO_ENABLED_KEY);
+  if (isTauri()) {
+    void import("./desktop-prefs").then(({ saveDesktopDemoEnabled }) => saveDesktopDemoEnabled(false));
+  }
 }
 
 export function getDemoBooks(): DemoBook[] {
