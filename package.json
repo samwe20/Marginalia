@@ -1,0 +1,44 @@
+{
+  "name": "marginalia",
+  "private": true,
+  "version": "0.1.0-prototype.1",
+  "description": "Private Windows app for book highlights and Markdown quotes (Tauri 2).",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samwe20/Marginalia.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "fixtures": "node scripts/build-fixtures.mjs",
+    "test:e2e": "npm run fixtures && playwright test",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:build:windows": "tauri build --target x86_64-pc-windows-msvc"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-store": "^2",
+    "foliate-js": "^1.0.1",
+    "pdfjs-dist": "^4.10.38",
+    "ulidx": "^2.4.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^22.10.2",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3",
+    "vitest": "^3.0.5",
+    "jszip": "^3.10.1"
+  }
+}
