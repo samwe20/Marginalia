@@ -28,7 +28,7 @@ exports.config = {
       "@wdio/tauri-service",
       {
         appBinaryPath: appExe,
-        driverProvider: "official",
+        driverProvider: "external",
         autoInstallTauriDriver: false,
         autoDownloadEdgeDriver: true,
         ...(process.env.TAURI_DRIVER_PATH ? { tauriDriverPath: process.env.TAURI_DRIVER_PATH } : {}),

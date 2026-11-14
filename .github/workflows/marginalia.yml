@@ -137,7 +137,9 @@ jobs:
         shell: pwsh
         env:
           INSTALLER_PATH: installer/${{ needs.windows-build.outputs.installer_file }}
-        run: ./scripts/ci/windows-installed-smoke.ps1
+        run: |
+          winget install --id gerardog.gsudo --exact --version 2.6.1 --source winget --installer-type wix --silent --accept-package-agreements --accept-source-agreements
+          & "$env:ProgramFiles\gsudo\Current\gsudo.exe" --direct --integrity Medium ./scripts/ci/windows-installed-smoke.ps1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
