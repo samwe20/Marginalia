@@ -24,9 +24,7 @@ fn allow_library_path(app: tauri::AppHandle, path: String) -> Result<(), String>
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(IndexState {
-            db_path: std::sync::Mutex::new(None),
-        })
+        .manage(IndexState::default())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_persisted_scope::init())

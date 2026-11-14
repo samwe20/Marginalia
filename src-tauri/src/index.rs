@@ -5,7 +5,15 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
 pub struct IndexState {
-    db_path: Mutex<Option<PathBuf>>,
+    pub db_path: Mutex<Option<PathBuf>>,
+}
+
+impl Default for IndexState {
+    fn default() -> Self {
+        Self {
+            db_path: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
