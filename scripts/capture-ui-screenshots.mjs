@@ -1,6 +1,5 @@
 /**
- * Capture Folio-style UI screenshots for review artifacts.
- * Usage: npm run build && npx vite preview --port 4173 &  node scripts/capture-ui-screenshots.mjs
+ * Capture UI screenshots (demo library, quotes DB, detail, search; light + dark).
  */
 import { chromium } from "@playwright/test";
 import { spawn } from "node:child_process";
@@ -27,29 +26,47 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 840 } });
 try {
   await page.goto(base);
   await page.waitForSelector(".sidebar");
-  await page.screenshot({ path: join(artifacts, "ui-library-light.png"), fullPage: false });
-
-  await page.locator('.nav-item[data-route="search"]').click();
-  await page.waitForSelector("#search-input");
-  await page.screenshot({ path: join(artifacts, "ui-search-light.png"), fullPage: false });
-
-  await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+  await page.locator('.nav-item[data-route="settings"]').click();
+  await page.locator("#btn-demo-load").click();
   await page.locator('.nav-item[data-route="library"]').click();
-  await page.locator("#file-open").setInputFiles(join(fixtures, "sample.epub"));
-  await page.locator("#epub-root foliate-view").waitFor({ state: "attached", timeout: 60_000 });
-  await page.waitForTimeout(800);
-  await page.screenshot({ path: join(artifacts, "ui-reader-epub-light.png"), fullPage: false });
+  await page.waitForSelector(".book-grid--demo");
+
+  await page.screenshot({ path: join(artifacts, "demo-library-light.png"), fullPage: false });
+
+  await page.locator('.nav-item[data-route="quotes"]').click();
+  await page.waitForSelector(".quote-db-grid");
+  await page.screenshot({ path: join(artifacts, "demo-quotes-db-light.png"), fullPage: false });
+
+  await page.locator("[data-demo-quote='demo-q007']").click();
+  await page.waitForSelector(".quote-detail__note");
+  await page.screenshot({ path: join(artifacts, "demo-quote-note-light.png"), fullPage: false });
+
+  await page.locator("#btn-back-quotes").click();
+  await page.locator('.nav-item[data-route="library"]').click();
+  await page.locator("[data-demo-book='demo-babicka']").click();
+  await page.waitForSelector(".book-detail");
+  await page.screenshot({ path: join(artifacts, "demo-book-detail-light.png"), fullPage: false });
+
+  await page.locator("#btn-back-library-detail").click();
+  await page.locator('.nav-item[data-route="search"]').click();
+  const search = page.locator("#search-input");
+  await search.fill("Hamlet");
+  await search.press("Enter");
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: join(artifacts, "demo-search-light.png"), fullPage: false });
 
   await page.evaluate(() => {
-    const app = document.querySelector("#app");
-    if (app) app.dataset.theme = "dark";
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#000000");
+    document.querySelector("#app")?.setAttribute("data-theme", "dark");
   });
-  await page.screenshot({ path: join(artifacts, "ui-reader-epub-dark.png"), fullPage: false });
-
   await page.locator('.nav-item[data-route="library"]').click();
-  await page.waitForSelector(".page h1");
-  await page.screenshot({ path: join(artifacts, "ui-library-dark.png"), fullPage: false });
+  await page.waitForSelector(".book-grid--demo");
+  await page.screenshot({ path: join(artifacts, "demo-library-dark.png"), fullPage: false });
+
+  await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+  await page.locator("#file-open").setInputFiles(join(fixtures, "sample.epub"));
+  await page.locator("#epub-root foliate-view").waitFor({ state: "attached", timeout: 60_000 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: join(artifacts, "ui-reader-epub-light.png"), fullPage: false });
 } finally {
   await browser.close();
   server.kill("SIGTERM");
