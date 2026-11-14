@@ -288,7 +288,7 @@ input {
   grid-template-columns: 1fr;
 }
 
-.app:not(.reading-mode) .backlinks-pane {
+.app:not(.reading-mode) .reader-backlinks-pane {
   display: none;
 }
 
@@ -311,7 +311,7 @@ input {
   transition: opacity 180ms ease, padding 220ms ease;
 }
 
-.app.backlinks-hidden .backlinks-pane {
+.app.backlinks-hidden .reader-backlinks-pane {
   width: 0;
   opacity: 0;
   padding: 0;
@@ -985,4 +985,177 @@ mark.quote-highlight,
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(127, 127, 127, 0.35) transparent;
+}
+
+/* Folio-aligned wikilinks (ported from samwe20/Folio src/styles.css) */
+.link-item,
+.note-list-item {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.backlinks-hint {
+  margin: 0 0 0.85rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.backlinks-count {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.backlinks-list,
+.outgoing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.outgoing-header h3 {
+  margin: 1.1rem 0 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.link-empty {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.link-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.7rem;
+  border-radius: var(--radius-sm, 10px);
+  font-size: 0.88rem;
+  font-weight: 550;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.link-item small {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.link-item:hover {
+  background: var(--accent-soft);
+  transform: translateX(2px);
+}
+
+.link-item.missing {
+  color: var(--warn, #b45309);
+}
+
+.notes-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) var(--backlinks-width);
+  gap: 0;
+  min-height: calc(100vh - var(--chrome-top, 52px));
+  max-height: calc(100vh - var(--chrome-top, 52px));
+}
+
+.notes-list {
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem;
+  overflow: auto;
+}
+
+.notes-list__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.35rem 0.75rem;
+}
+
+.notes-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.note-list-item {
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm, 10px);
+  font-size: 0.88rem;
+}
+
+.note-list-item.active {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.notes-editor-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+}
+
+.editor-root,
+.preview-root.preview-pane-inline {
+  overflow: auto;
+  min-height: 0;
+}
+
+.editor-root .cm-editor {
+  height: 100%;
+}
+
+.preview-root {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2rem;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--border);
+}
+
+.preview-root a.wiki-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.preview-root a.wiki-link.missing {
+  color: var(--warn, #b45309);
+  text-decoration-style: dotted;
+}
+
+.page--narrow.page--with-backlinks,
+.book-detail--with-backlinks {
+  max-width: none;
+}
+
+.detail-backlinks {
+  margin-top: 2rem;
+}
+
+.quote-detail__note .preview-root {
+  border-top: 0;
+  padding: 0;
+  max-width: none;
+  font-size: 1rem;
 }
