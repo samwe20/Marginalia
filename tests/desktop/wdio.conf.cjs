@@ -31,7 +31,7 @@ exports.config = {
         driverProvider: "official",
         autoInstallTauriDriver: false,
         autoDownloadEdgeDriver: true,
-        tauriDriverPath: process.env.TAURI_DRIVER_PATH || "tauri-driver",
+        ...(process.env.TAURI_DRIVER_PATH ? { tauriDriverPath: process.env.TAURI_DRIVER_PATH } : {}),
       },
     ],
   ],
