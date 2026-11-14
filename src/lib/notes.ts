@@ -1,4 +1,5 @@
 import { ulid } from "ulidx";
+import { indexRemoveNote, indexUpsertNote } from "./note-search-index";
 import { isTauri } from "./runtime";
 
 export interface LibraryNote {
@@ -97,6 +98,7 @@ export async function saveNote(libraryRoot: string, note: LibraryNote): Promise<
     const path = notePath(libraryRoot, note.filename);
     await mkdir(`${libraryRoot}/poznamky`, { recursive: true });
     await writeTextFile(path, payload);
+    await indexUpsertNote(libraryRoot, note);
     return;
   }
   const list = listLocalNotes();
@@ -113,6 +115,7 @@ export async function deleteNote(libraryRoot: string, id: string): Promise<void>
     if (note) {
       const { remove } = await import("@tauri-apps/plugin-fs");
       await remove(notePath(libraryRoot, note.filename));
+      await indexRemoveNote(note.id);
     }
     return;
   }

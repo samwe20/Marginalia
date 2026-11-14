@@ -18,8 +18,11 @@ import {
   getDemoQuotes,
   getDemoQuotesForBook,
   isDemoEnabled,
+  searchDemoNotes,
   searchDemoQuotes,
 } from "./lib/demo-data";
+import { listNotes } from "./lib/notes";
+import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
 import { escapeAttr, escapeHtml } from "./lib/html";
 import { icons } from "./ui/icons";
 import {
@@ -455,7 +458,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   const renderSearch = () => {
     stageMain.innerHTML = `
       <div class="page">
-        <h1>Hledat citace</h1>
+        <h1>Hledat citace a poznámky</h1>
         <label class="field">
           <span>Dotaz</span>
           <input type="search" id="search-input" placeholder="Napište slovo nebo frázi…" autocomplete="off" />
@@ -477,20 +480,65 @@ export async function bootApp(root: HTMLElement): Promise<void> {
         if (demoHits.length) {
           const bookMap = new Map(getDemoBooks().map((b) => [b.slug, b]));
           parts.push(
-            `<section><h2 class="section-title">Ukázková data</h2><div class="quote-db-grid">${demoHits
+            `<section><h2 class="section-title">Ukázková data — citace</h2><div class="quote-db-grid">${demoHits
               .map((hit) => renderQuoteDbCard(hit, bookMap.get(hit.bookSlug)))
               .join("")}</div></section>`,
           );
         }
+        const demoNoteHits = searchDemoNotes(q);
+        if (demoNoteHits.length) {
+          parts.push(
+            `<section><h2 class="section-title">Ukázková data — poznámky</h2><ul class="search-note-list">${demoNoteHits
+              .map(
+                (n) =>
+                  `<li><button type="button" class="search-note-card" data-demo-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote({ ...n, filename: n.filename }, q))}</span></button></li>`,
+              )
+              .join("")}</ul></section>`,
+          );
+        }
+      }
+      const userNotes = await listNotes(state.libraryRoot);
+      if (!isTauri() && userNotes.length) {
+        const localHits = searchNotesLocal(userNotes, q);
+        if (localHits.length) {
+          parts.push(
+            `<section><h2 class="section-title">Poznámky (web)</h2><ul class="search-note-list">${localHits
+              .map(
+                (n) =>
+                  `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote(n, q))}</span></button></li>`,
+              )
+              .join("")}</ul></section>`,
+          );
+        }
       }
       if (isTauri() && state.libraryRoot) {
-        await openLibraryIndex();
+        await openLibraryIndex(state.libraryRoot);
         const { invoke } = await import("@tauri-apps/api/core");
-        const hits = (await invoke("index_search", { query: q, limit: 20 })) as { snippet: string }[];
-        if (hits.length) {
+        type IndexHit = {
+          hit_kind: string;
+          quote_id?: string;
+          book_slug?: string;
+          note_id?: string;
+          note_title?: string;
+          snippet: string;
+        };
+        const hits = (await invoke("index_search", { query: q, limit: 24 })) as IndexHit[];
+        const quoteHits = hits.filter((h) => h.hit_kind === "quote");
+        const noteHits = hits.filter((h) => h.hit_kind === "note");
+        if (quoteHits.length) {
           parts.push(
-            `<section><h2 class="section-title">Vaše knihovna</h2><ul class="quote-list">${hits
+            `<section><h2 class="section-title">Vaše knihovna — citace</h2><ul class="quote-list">${quoteHits
               .map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`)
+              .join("")}</ul></section>`,
+          );
+        }
+        if (noteHits.length) {
+          parts.push(
+            `<section><h2 class="section-title">Vaše knihovna — poznámky</h2><ul class="search-note-list">${noteHits
+              .map(
+                (h) =>
+                  `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(h.note_id ?? "")}"><span class="search-note-card__title">${escapeHtml(h.note_title ?? "Poznámka")}</span><span class="search-note-card__snippet">${escapeHtml(h.snippet)}</span></button></li>`,
+              )
               .join("")}</ul></section>`,
           );
         }
@@ -501,6 +549,18 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       }
       box.innerHTML = parts.join("");
       bindDemoNavigation();
+      stageMain.querySelectorAll("[data-demo-note]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          activeNoteId = (btn as HTMLElement).dataset.demoNote!;
+          setRoute("notes");
+        });
+      });
+      stageMain.querySelectorAll("[data-user-note]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          activeNoteId = (btn as HTMLElement).dataset.userNote!;
+          setRoute("notes");
+        });
+      });
     };
     input.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter") return;
@@ -508,7 +568,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     });
     input.addEventListener("input", () => {
       const q = input.value.trim();
-      if (q.length >= 2 && isDemoEnabled()) void runSearch(q);
+      if (q.length >= 2) void runSearch(q);
     });
   };
 
@@ -568,7 +628,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
         localStorage.setItem("marginalia.libraryRoot", selected);
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("allow_library_path", { path: selected });
-        await openLibraryIndex();
+        await openLibraryIndex(selected);
         setLibraryPath(selected, selected);
         setStatus(`Knihovna: ${selected}`);
         toast("Složka knihovny nastavena", "success");
@@ -722,7 +782,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   });
 
   if (state.libraryRoot) {
-    void openLibraryIndex();
+    void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
   }
 
