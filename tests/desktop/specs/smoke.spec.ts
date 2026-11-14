@@ -196,7 +196,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await $('[data-route="search"]').click();
       await browser.pause(400);
       const input = await $("#search-input");
-      await input.setValue("Dickens");
+      await input.setValue("Tolstoj");
       await browser.keys(["Enter"]);
       await browser.pause(1200);
       const hits = await $("#search-results .quote-db-card, #search-results .search-note-card");
@@ -228,7 +228,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S11 notes / wikilink surface", async () => {
     try {
       await $('[data-route="notes"]').click();
-      await browser.pause(800);
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
       await expect($(".notes-layout #editor-root")).toBeDisplayed();
       record("S11", "Notes view (wikilink/backlink UI)", true);
     } catch (e) {

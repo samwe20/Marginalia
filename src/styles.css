@@ -1176,6 +1176,10 @@ mark.quote-highlight,
   grid-template-rows: 1fr 1fr;
 }
 
+.notes-editor-pane .editor-root {
+  min-height: 10rem;
+}
+
 .editor-root,
 .preview-root.preview-pane-inline {
   overflow: auto;
