@@ -1,0 +1,7 @@
+# Transitive Tauri/GTK advisories without practical upgrade path on Tauri 2.0 yet.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0372",
+  "RUSTSEC-2024-0429",
+  "RUSTSEC-2026-0386",
+]
