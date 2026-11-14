@@ -861,6 +861,18 @@ input {
   color: var(--muted);
 }
 
+.theme-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+
+.theme-picker__btn--on {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
 .field input {
   height: 36px;
   padding: 0 0.75rem;

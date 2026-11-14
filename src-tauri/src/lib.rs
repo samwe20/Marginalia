@@ -1,6 +1,7 @@
 mod index;
 mod library;
 mod links;
+mod smoke;
 
 use index::IndexState;
 use std::path::Path;
@@ -44,6 +45,9 @@ pub fn run() {
             links::link_index_rebuild,
             links::link_index_backlinks,
             library::sha256_file,
+            smoke::smoke_is_enabled,
+            smoke::smoke_fixture_paths,
+            smoke::smoke_open_book,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");

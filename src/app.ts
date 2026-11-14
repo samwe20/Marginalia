@@ -6,8 +6,12 @@ import {
   ensureBookCard,
   type BookMeta,
 } from "./lib/storage";
+import { loadBookCard, persistBookFile, readBookBytes, updateBookCardPath } from "./lib/book-library";
+import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
+import { wireSmokeAutomation } from "./lib/smoke-bridge";
+import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import {
@@ -60,7 +64,9 @@ const ROUTE_LABEL: Record<Exclude<Route, "reader">, string> = {
   settings: "Nastavení",
 };
 
-export async function bootApp(root: HTMLElement): Promise<void> {
+type ThemeController = ReturnType<typeof initThemePreference>;
+
+export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Promise<void> {
   root.innerHTML = "";
   const toast = mountToastRegion(document.body);
 
@@ -263,7 +269,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       void renderNotesView(stageMain, {
         libraryRoot: state.libraryRoot,
         index: linkIndex,
-        theme: "light",
+        theme: themeCtrl.getEffective(),
         wiki: wikiHandlers,
         onReindex: reindexLinks,
       }, activeNoteId);
@@ -335,10 +341,10 @@ export async function bootApp(root: HTMLElement): Promise<void> {
         <h1>Knihovna</h1>
         <p class="page-intro">Otevřete PDF nebo EPUB, nebo přetáhněte soubor do oblasti níže.</p>
         <div class="page-actions">
-          <button type="button" class="primary-btn" id="btn-open-book">Otevřít knihu…</button>
+          <button type="button" class="primary-btn" id="btn-open-book" data-testid="btn-open-book">Otevřít knihu…</button>
           <button type="button" class="ghost-btn solid" id="btn-library-folder">Složka knihovny…</button>
         </div>
-        <div class="drop-zone" id="drop-zone" tabindex="0" aria-label="Oblast pro přetažení knihy">
+        <div class="drop-zone" id="drop-zone" data-testid="drop-zone" tabindex="0" aria-label="Oblast pro přetažení knihy">
           Přetáhněte sem PDF nebo EPUB
         </div>
         ${
@@ -355,9 +361,12 @@ export async function bootApp(root: HTMLElement): Promise<void> {
             ? `<section class="library-section">
             <h2 class="section-title">Nedávno otevřené</h2>
             <div class="book-grid">${recent
-                .map(
-                  (b) => `
-              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}" title="${escapeAttr(b.title)}">
+              .map(
+                (b) => `
+              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
+                data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
+                data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
+                title="${escapeAttr(b.title)}">
                 <div class="book-card__cover book-card__cover--letter">${escapeHtml(b.title.slice(0, 1).toUpperCase())}</div>
                 <div class="book-card__title">${escapeHtml(b.title)}</div>
                 <div class="book-card__meta">${b.kind.toUpperCase()}</div>
@@ -387,7 +396,15 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     });
     stageMain.querySelectorAll(".book-card:not(.book-card--demo)").forEach((card) => {
       card.addEventListener("click", () => {
-        toast("Znovu otevřete knihu přes Otevřít knihu… (prototype bez cache souboru).", "info");
+        const el = card as HTMLElement;
+        void reopenRecentBook({
+          slug: el.dataset.slug!,
+          kind: el.dataset.kind as "pdf" | "epub",
+          title: el.dataset.title ?? "",
+          author: el.dataset.author ?? "",
+          sha256: el.dataset.sha256 ?? "",
+          filePath: el.dataset.filePath ?? "",
+        });
       });
     });
     bindDemoNavigation();
@@ -575,6 +592,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
 
   const renderSettings = () => {
     const demoOn = isDemoEnabled();
+    const themePref = themeCtrl.getPreference();
     stageMain.innerHTML = `
       <div class="page">
         <h1>Nastavení</h1>
@@ -583,6 +601,14 @@ export async function bootApp(root: HTMLElement): Promise<void> {
           <button type="button" class="primary-btn" id="btn-settings-library">Vybrat složku knihovny…</button>
         </div>
         <p class="muted"><strong>Aktuální cesta:</strong> ${escapeHtml(state.libraryRoot || "—")}</p>
+        <hr class="settings-sep" />
+        <h2 class="section-title">Vzhled</h2>
+        <p class="muted">Motiv aplikace (stejně jako ve Folio — můžete přebít systémový režim).</p>
+        <div class="theme-picker" role="radiogroup" aria-label="Motiv">
+          <button type="button" class="chip-btn theme-picker__btn${themePref === "system" ? " theme-picker__btn--on" : ""}" data-theme-pref="system">Systém</button>
+          <button type="button" class="chip-btn theme-picker__btn${themePref === "light" ? " theme-picker__btn--on" : ""}" data-theme-pref="light">Světlý</button>
+          <button type="button" class="chip-btn theme-picker__btn${themePref === "dark" ? " theme-picker__btn--on" : ""}" data-theme-pref="dark">Tmavý</button>
+        </div>
         <hr class="settings-sep" />
         <h2 class="section-title">Ukázková data</h2>
         <p class="muted">Ukázka knihovny, citací a poznámek pro náhled UI. Data zůstávají v aplikaci a <strong>nemíchejí se</strong> s vašimi soubory na disku.</p>
@@ -594,6 +620,17 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       </div>
     `;
     stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary());
+    stageMain.querySelectorAll("[data-theme-pref]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pref = (btn as HTMLElement).dataset.themePref as "system" | "light" | "dark";
+        themeCtrl.setPreference(pref);
+        toast(
+          pref === "system" ? "Motiv: podle systému" : pref === "light" ? "Motiv: světlý" : "Motiv: tmavý",
+          "success",
+        );
+        renderSettings();
+      });
+    });
     stageMain.querySelector("#btn-demo-load")?.addEventListener("click", () => {
       enableDemoData();
       void reindexLinks();
@@ -676,67 +713,81 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     }
   };
 
-  const openBookFile = async (file: File) => {
+  const openBookFromBuffer = async (
+    buffer: ArrayBuffer,
+    fileName: string,
+    opts: { slug?: string; storedPath?: string; skipPersist?: boolean } = {},
+  ) => {
+    const sha = await sha256Hex(buffer);
+    const lower = fileName.toLowerCase();
     try {
-      const buffer = (await file.arrayBuffer()).slice(0);
-      const sha = await sha256Hex(buffer);
-      state.book = {
-        title: file.name.replace(/\.[^.]+$/, ""),
-        author: "",
-        sha256: sha,
-        filePath: file.name,
-      };
-      if (!state.libraryRoot) await pickLibrary();
-      state.slug = await ensureBookCard(state.libraryRoot, state.book);
+    state.book = {
+      title: fileName.replace(/\.[^.]+$/, ""),
+      author: "",
+      sha256: sha,
+      filePath: opts.storedPath ?? fileName,
+    };
+    if (!state.libraryRoot) await pickLibrary();
+    let slug = opts.slug;
+    if (!opts.skipPersist) {
+      const persisted = await persistBookFile(state.libraryRoot, state.book, buffer, fileName);
+      slug = persisted.slug;
+      state.book.filePath = persisted.storedPath;
+    } else {
+      slug = slug ?? bookSlug(state.book.title, sha);
+      if (opts.storedPath) state.book.filePath = opts.storedPath;
+    }
+    state.slug = slug;
+    await ensureBookCard(state.libraryRoot, state.book);
 
-      if (file.name.toLowerCase().endsWith(".pdf")) {
-        pushRecent({ ...state.book, slug: state.slug, kind: "pdf" });
-        epub?.destroy();
-        epub = null;
-        mountReaderChrome("pdf", state.book.title);
-        const pdfRoot = stageMain.querySelector("#pdf-root") as HTMLElement;
-        pdf = new PdfReader({
-          container: pdfRoot,
-          getMode: () => state.mode,
-          onHighlight: async ({ text, pageIndex, anchor }) => {
-            await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
-            const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-            renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-            toast("Citace uložena", "success");
-          },
-        });
-        await pdf.load(buffer);
-        const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-        await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
-        renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-      } else if (file.name.toLowerCase().endsWith(".epub")) {
-        pushRecent({ ...state.book, slug: state.slug, kind: "epub" });
-        pdf?.destroy();
-        pdf = null;
-        mountReaderChrome("epub", state.book.title);
-        const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
-        epub = new EpubReader({
-          container: epubRoot,
-          getMode: () => state.mode,
-          onHighlight: async ({ text, cfi, anchor }) => {
-            await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
-            const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-            renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-            toast("Citace uložena", "success");
-          },
-        });
-        await epub.load(new File([buffer], file.name, { type: "application/epub+zip" }));
-        const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-        await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
-        renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-      } else {
-        throw new Error("Nepodporovaný formát — použijte PDF nebo EPUB.");
-      }
+    if (lower.endsWith(".pdf")) {
+      pushRecent({ ...state.book, slug: state.slug, kind: "pdf" });
+      epub?.destroy();
+      epub = null;
+      mountReaderChrome("pdf", state.book.title);
+      const pdfRoot = stageMain.querySelector("#pdf-root") as HTMLElement;
+      pdf = new PdfReader({
+        container: pdfRoot,
+        getMode: () => state.mode,
+        onHighlight: async ({ text, pageIndex, anchor }) => {
+          await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
+          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          toast("Citace uložena", "success");
+        },
+      });
+      await pdf.load(buffer);
+      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+      await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
+      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+    } else if (lower.endsWith(".epub")) {
+      pushRecent({ ...state.book, slug: state.slug, kind: "epub" });
+      pdf?.destroy();
+      pdf = null;
+      mountReaderChrome("epub", state.book.title);
+      const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
+      epub = new EpubReader({
+        container: epubRoot,
+        getMode: () => state.mode,
+        onHighlight: async ({ text, cfi, anchor }) => {
+          await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
+          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          toast("Citace uložena", "success");
+        },
+      });
+      await epub.load(new File([buffer], fileName, { type: "application/epub+zip" }));
+      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+      await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
+      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+    } else {
+      throw new Error("Nepodporovaný formát — použijte PDF nebo EPUB.");
+    }
 
-      state.route = "reader";
-      setRoute("reader");
-      state.inspectorOpen = true;
-      syncReadingChrome();
+    state.route = "reader";
+    setRoute("reader");
+    state.inspectorOpen = true;
+    syncReadingChrome();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);
@@ -744,6 +795,59 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       console.error(err);
     }
   };
+
+  const reopenRecentBook = async (entry: RecentBook) => {
+    if (!state.libraryRoot) await pickLibrary();
+    let storedPath = entry.filePath;
+    const card = await loadBookCard(state.libraryRoot, entry.slug);
+    if (card?.path) storedPath = card.path;
+    let buffer = await readBookBytes(state.libraryRoot, entry.slug, storedPath);
+    if (!buffer) {
+      toast(`Soubor knihy nebyl nalezen (${storedPath}).`, "error");
+      const ok = window.confirm(
+        "Soubor knihy na disku chybí nebo byl přesunut. Chcete vybrat nové umístění (Najít soubor)?",
+      );
+      if (!ok) return;
+      const picked = await pickBookFileViaDialog();
+      if (!picked) return;
+      const newBuf = (await picked.arrayBuffer()).slice(0);
+      const persisted = await persistBookFile(
+        state.libraryRoot,
+        { title: entry.title, sha256: entry.sha256 },
+        newBuf,
+        picked.name,
+      );
+      storedPath = persisted.storedPath;
+      await updateBookCardPath(state.libraryRoot, entry.slug, storedPath);
+      pushRecent({ ...entry, filePath: storedPath });
+      buffer = newBuf;
+    }
+    const fileName = storedPath.replace(/^.*[/\\]/, "") || `${entry.slug}.${entry.kind === "pdf" ? "pdf" : "epub"}`;
+    await openBookFromBuffer(buffer, fileName, {
+      slug: entry.slug,
+      storedPath,
+      skipPersist: true,
+    });
+  };
+
+  const openBookFile = async (file: File) => {
+    const buffer = (await file.arrayBuffer()).slice(0);
+    await openBookFromBuffer(buffer, file.name, { skipPersist: false });
+  };
+
+  const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("allow_library_path", { path: libraryRoot });
+    state.libraryRoot = libraryRoot;
+    localStorage.setItem("marginalia.libraryRoot", libraryRoot);
+    const { readFile } = await import("@tauri-apps/plugin-fs");
+    const bytes = await readFile(filePath);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const name = filePath.replace(/^.*[/\\]/, "");
+    await openBookFromBuffer(buffer, name, { skipPersist: false });
+  };
+
+  await wireSmokeAutomation(openBookFromAbsolutePath);
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files?.[0];
