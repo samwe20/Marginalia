@@ -143,6 +143,7 @@ jobs:
           if (-not (Test-Path $gsudo)) { throw "gsudo not found at $gsudo" }
           $smoke = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/windows-installed-smoke.ps1"
           & $gsudo --direct --integrity Medium pwsh -NoProfile -ExecutionPolicy Bypass -File $smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

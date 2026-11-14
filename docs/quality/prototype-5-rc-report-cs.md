@@ -1,6 +1,7 @@
 # RC report — prototype.5 (bugy 1–4 + cross-cutting)
 
-> Tabulka smoke z **nainstalované** aplikace doplní CI artefakt `desktop-smoke-<sha>/smoke-results.json` po zeleném `windows-installed-smoke`. Dokud CI neprojde, **netvrďte** desktop jako ověřený.
+> **CI run [#54](https://github.com/samwe20/Marginalia/actions/runs/43638524352)** (`af84463`) — všech 14 checků zelených; harness nainstalované app poprvé doběhl (~8½ min). Artefakt `desktop-smoke-8705c81` — viz tabulka níže.  
+> **Upozornění:** WDIO logoval `1 failed` spec soubor, ale job byl zelený (PowerShell/gsudo nepropagoval exit kód) — oprava v dalším commitu. **Plný Janův checklist není 100 % PASS** dokud nejsou zelené S04–S06/S05/S12 ve `smoke-results.json` a gate je přísný.
 
 ## Kořenové příčiny (Jan)
 
@@ -18,11 +19,22 @@
 - **CSP / asset protocol:** `allow_library_path` rozšiřuje FS i `asset_protocol_scope`.
 - **Perzistence:** knihy → `knihovna/knihy/`, karty YAML, citace `.md`, index Rust — smoke S06/S12 cílí na knihovnu po reloadu.
 
-## Smoke — výsledky (doplnit z CI)
+## Smoke — výsledky (run 43638524352, artefakt `desktop-smoke-8705c81`)
 
 | ID | Název | Výsledek | Poznámka |
 |----|-------|----------|----------|
-| … | viz `smoke-results.json` | PASS/FAIL | |
+| S01 | Library shell | PASS | |
+| S02 | Theme Systém/Světlý/Tmavý | PASS | screenshot `smoke-light-mode.png` |
+| S03 | Open PDF (smoke hook) | PASS | |
+| S04 | Ctrl+O → fixture PDF | FAIL | špatný flow testu (`#btn-back-library` po kliku na knihovnu) |
+| S05 | PDF výběr textu | FAIL | `selectFirstPdfText()` false v instalované app |
+| S06 | Reopen z knihovny | FAIL | navázané na S04/S05 |
+| S07 | EPUB | PASS | |
+| S08 | Otevřít knihu | PASS | |
+| S09 | Hledání | PASS | |
+| S10 | Demo data | PASS | |
+| S11 | Poznámky / wikilink UI | PASS | drill-down ruční |
+| S12 | Reload → karta knihovny | FAIL | `reloadSession` bez karty |
 
 ## Screenshoty (z instalované app, artefakt CI)
 

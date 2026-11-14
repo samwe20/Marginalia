@@ -102,10 +102,11 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S04 Ctrl+O opens PDF (smoke maps to fixture)", async () => {
     try {
-      await $('[data-route="library"]').click();
-      await browser.pause(500);
-      await $("#btn-back-library").click();
-      await browser.pause(600);
+      const back = await $("#btn-back-library");
+      if (await back.isExisting()) {
+        await back.click();
+        await browser.pause(800);
+      }
       await browser.keys(["Control", "o"]);
       await browser.pause(3500);
       await expect($("#pdf-root .textLayer")).toBeDisplayed();

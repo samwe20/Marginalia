@@ -47,6 +47,21 @@ try {
     cargo install tauri-driver --locked
   }
   npm run test:desktop-smoke
+  if ($LASTEXITCODE -ne 0) {
+    throw "test:desktop-smoke exited with $LASTEXITCODE"
+  }
+  $resultsJson = Join-Path $resultsDir "smoke-results.json"
+  if (-not (Test-Path $resultsJson)) {
+    throw "smoke-results.json missing at $resultsJson"
+  }
+  $rows = Get-Content $resultsJson -Raw | ConvertFrom-Json
+  $failed = @($rows | Where-Object { -not $_.ok })
+  if ($failed.Count -gt 0) {
+    foreach ($f in $failed) {
+      Write-Host "::error::$($f.id) $($f.name): $($f.detail)"
+    }
+    throw "$($failed.Count) smoke case(s) failed (see smoke-results.json)"
+  }
 } finally {
   Pop-Location
 }
