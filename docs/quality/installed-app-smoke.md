@@ -5,7 +5,7 @@
 - Job **`windows-installed-smoke`** (závisí na `windows-build`):
   1. Stáhne NSIS artefakt z CI buildu.
   2. Tichá instalace: `/S /D=%LOCALAPPDATA%\MarginaliaSmoke`.
-  3. Spustí **nainstalovaný** `Marginalia.exe` přes **tauri-driver** + **WebdriverIO** (`@wdio/tauri-service`, `driverProvider: official`, Edge WebDriver).
+  3. Spustí **nainstalovaný** binár přes **tauri-driver** + **WebdriverIO** (`driverProvider: external`, Edge WebDriver). Na GHA jde harness přes **gsudo --integrity Medium** (WebView2 při High Integrity neotevře DevTools port).
   4. `MARGINALIA_SMOKE=1` povolí Rust/front-end hooky (obejití nativního dialogu, Ctrl+O → fixture PDF).
 
 - Job **`windows-develop-release`** publikuje `develop-latest` **jen pokud** smoke projde (`needs: [windows-build, windows-installed-smoke]`).
