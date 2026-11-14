@@ -827,6 +827,23 @@ input {
   line-height: 1.7;
 }
 
+.pdf-page {
+  position: relative;
+  margin: 0 auto 1.25rem;
+  width: fit-content;
+  line-height: 0;
+}
+
+.pdf-page canvas {
+  display: block;
+}
+
+.pdf-page .textLayer {
+  z-index: 2;
+  user-select: text;
+  pointer-events: auto;
+}
+
 /* Search & settings */
 .field {
   display: flex;
@@ -933,10 +950,6 @@ input {
 }
 
 /* Highlights */
-.textLayer span {
-  color: transparent;
-}
-
 mark.quote-highlight,
 .quote-highlight {
   background: var(--highlight) !important;

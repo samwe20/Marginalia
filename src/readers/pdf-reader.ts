@@ -1,12 +1,11 @@
 import * as pdfjs from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist/build/pdf.mjs";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import "pdfjs-dist/web/pdf_viewer.css";
 import { anchorFromPdfSelection, getPdfPosition, getTextQuote, reanchorInText } from "../lib/anchor";
 import { attachHighlighter, rangeToOffsets, type HighlightMode } from "../lib/highlighter";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export interface PdfReaderOptions {
   container: HTMLElement;
@@ -48,8 +47,7 @@ export class PdfReader {
 
       const textLayer = document.createElement("div");
       textLayer.className = "textLayer";
-      textLayer.style.width = `${viewport.width}px`;
-      textLayer.style.height = `${viewport.height}px`;
+      textLayer.style.setProperty("--scale-factor", String(viewport.scale));
 
       const text = await page.getTextContent();
       const layer = new TextLayer({

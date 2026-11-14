@@ -6,6 +6,7 @@ import {
   ensureBookCard,
   type BookMeta,
 } from "./lib/storage";
+import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
@@ -370,7 +371,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
       </div>
     `;
 
-    stageMain.querySelector("#btn-open-book")?.addEventListener("click", () => fileInput.click());
+    stageMain.querySelector("#btn-open-book")?.addEventListener("click", () => void promptOpenBook());
     stageMain.querySelector("#btn-library-folder")?.addEventListener("click", () => void pickLibrary());
     const zone = stageMain.querySelector("#drop-zone")!;
     zone.addEventListener("dragover", (e) => {
@@ -660,6 +661,21 @@ export async function bootApp(root: HTMLElement): Promise<void> {
     });
   };
 
+  const promptOpenBook = async () => {
+    try {
+      const fromDialog = await pickBookFileViaDialog();
+      if (fromDialog) {
+        await openBookFile(fromDialog);
+        return;
+      }
+      if (!isTauri()) fileInput.click();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast(msg, "error");
+      setStatus(msg);
+    }
+  };
+
   const openBookFile = async (file: File) => {
     try {
       const buffer = (await file.arrayBuffer()).slice(0);
@@ -769,7 +785,7 @@ export async function bootApp(root: HTMLElement): Promise<void> {
   window.addEventListener("keydown", (ev) => {
     if (ev.ctrlKey && ev.key.toLowerCase() === "o") {
       ev.preventDefault();
-      fileInput.click();
+      void promptOpenBook();
     }
     if (ev.ctrlKey && ev.key.toLowerCase() === "f") {
       ev.preventDefault();
