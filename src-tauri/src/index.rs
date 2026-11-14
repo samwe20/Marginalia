@@ -364,7 +364,7 @@ mod tests {
         };
         upsert_note_in_conn(&conn, &row).unwrap();
         let mut stmt = conn
-            .prepare("SELECT note_id FROM notes_fts WHERE notes_fts MATCH '\"ironie\"'")
+            .prepare("SELECT note_id FROM notes_fts WHERE notes_fts MATCH '\"Hamlet\"'")
             .unwrap();
         let ids: Vec<String> = stmt
             .query_map([], |row| row.get(0))

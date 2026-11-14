@@ -1,7 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use tauri::State;
 
 use crate::index::IndexState;
