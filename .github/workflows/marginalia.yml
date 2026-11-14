@@ -51,6 +51,17 @@ jobs:
           cache-on-failure: true
       - working-directory: src-tauri
         run: cargo test
+  rust-tests-windows:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - working-directory: src-tauri
+        run: cargo test
   windows-build:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
     runs-on: windows-latest
