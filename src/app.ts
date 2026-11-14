@@ -3,6 +3,7 @@ import {
   openLibraryIndex,
   saveQuote,
   loadQuotesForBook,
+  loadAllQuotesFromLibrary,
   ensureBookCard,
   type BookMeta,
 } from "./lib/storage";
@@ -26,6 +27,9 @@ import {
   saveDesktopRecentBooks,
 } from "./lib/desktop-prefs";
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
+import { installSmokeTestApi } from "./lib/smoke-test-api";
+import { smokeVerifyDialogPlugin } from "./lib/open-book";
+import { createBlankNote, saveNote } from "./lib/notes";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
@@ -60,6 +64,7 @@ import {
   indexPathForDemoQuote,
   openWikiTarget,
 } from "./lib/wiki-navigation";
+import { noteIndexPath } from "./lib/marginalia-paths";
 import { renderMarkdown } from "./lib/preview";
 import { renderFolioBacklinksPanel } from "./ui/folio-backlinks";
 import { renderNotesView } from "./ui/notes-view";
@@ -308,7 +313,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
     setContextTitle(label);
     if (route === "library") void renderLibrary();
-    if (route === "quotes") renderQuotesOverview();
+    if (route === "quotes") void renderQuotesOverview();
     if (route === "notes") {
       void renderNotesView(stageMain, {
         libraryRoot: state.libraryRoot,
@@ -454,12 +459,27 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     bindDemoNavigation();
   };
 
-  const renderQuotesOverview = () => {
-    if (!isDemoEnabled()) {
+  const renderQuotesOverview = async () => {
+    const userQuotes = state.libraryRoot ? await loadAllQuotesFromLibrary(state.libraryRoot) : [];
+    if (!isDemoEnabled() && !userQuotes.length) {
       stageMain.innerHTML = `
         <div class="page">
           <h1>Databáze citací</h1>
           <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
+        </div>`;
+      return;
+    }
+    if (userQuotes.length && !isDemoEnabled()) {
+      stageMain.innerHTML = `
+        <div class="page page--wide">
+          <h1>Databáze citací</h1>
+          <p class="muted results-count">${userQuotes.length} citací z knihovny</p>
+          <ul class="quote-list user-quote-list">${userQuotes
+            .map(
+              (d) =>
+                `<li class="quote-card" data-user-quote="${escapeAttr(d.meta.id)}"><div class="quote-card__page">${escapeHtml(d.meta.page)}</div><div class="quote-card__text">${escapeHtml(d.quoteText)}</div></li>`,
+            )
+            .join("")}</ul>
         </div>`;
       return;
     }
@@ -499,7 +519,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           ${quotes.map((q) => renderQuoteDbCard(q, bookMap.get(q.bookSlug))).join("")}
         </div>
       </div>`;
-    const rerender = () => renderQuotesOverview();
+    const rerender = () => void renderQuotesOverview();
     stageMain.querySelector<HTMLSelectElement>("#filter-book")?.addEventListener("change", (ev) => {
       state.quotesFilterBook = (ev.target as HTMLSelectElement).value;
       rerender();
@@ -719,7 +739,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       else setLibraryPath("Žádná knihovna");
       renderSettings();
       if (state.route === "library") void renderLibrary();
-      if (state.route === "quotes") renderQuotesOverview();
+      if (state.route === "quotes") void renderQuotesOverview();
       if (state.route === "notes") setRoute("notes");
     });
   };
@@ -842,6 +862,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         },
       });
       await epub.load(new File([buffer], fileName, { type: "application/epub+zip" }));
+      if ((epubRoot.textContent?.trim().length ?? 0) > 0) epubRoot.dataset.epubTextReady = "1";
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
@@ -910,6 +931,58 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   await wireSmokeAutomation(openBookFromAbsolutePath);
+
+  installSmokeTestApi({
+    dropBookFromPath: async (libraryRoot, filePath) => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("smoke_drop_book", { libraryRoot, filePath });
+    },
+    createPdfQuoteFromSelection: async () => {
+      if (!pdf || !state.book || !state.slug || !state.libraryRoot) {
+        throw new Error("PDF reader or book context missing");
+      }
+      const draft = pdf.quoteDraftFromFirstText();
+      if (!draft) throw new Error("No selectable PDF text");
+      const saved = await saveQuote(
+        state.libraryRoot,
+        state.book,
+        state.slug,
+        draft.text,
+        String(draft.pageIndex + 1),
+        draft.anchor,
+      );
+      pdf.paintHighlight(draft.layer, draft.range);
+      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
+    },
+    createEpubQuoteFromSelection: async () => {
+      if (!epub || !state.book || !state.slug || !state.libraryRoot) {
+        throw new Error("EPUB reader or book context missing");
+      }
+      const draft = epub.quoteDraftFromFirstText();
+      if (!draft) throw new Error("No selectable EPUB text");
+      const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
+      epub.paintHighlight(draft.range);
+      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
+    },
+    verifyDialogPlugin: smokeVerifyDialogPlugin,
+    seedWikilinkBacklink: async () => {
+      if (!state.libraryRoot) throw new Error("No library root");
+      const targetTitle = "Smoke cíl";
+      const target = createBlankNote(targetTitle);
+      await saveNote(state.libraryRoot, target);
+      const source = createBlankNote("Smoke zdroj");
+      source.body = `Odkaz na [[${targetTitle}]].\n`;
+      await saveNote(state.libraryRoot, source);
+      await reindexLinks();
+      const backlinks = linkIndex.getBacklinks(noteIndexPath(target.filename));
+      return { targetTitle, backlinkCount: backlinks.length };
+    },
+    currentBookSlug: () => state.slug,
+  });
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files?.[0];

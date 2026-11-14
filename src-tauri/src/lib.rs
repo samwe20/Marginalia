@@ -48,6 +48,9 @@ pub fn run() {
             smoke::smoke_is_enabled,
             smoke::smoke_fixture_paths,
             smoke::smoke_open_book,
+            smoke::smoke_drop_book,
+            smoke::smoke_dialog_capable,
+            smoke::smoke_list_quote_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");

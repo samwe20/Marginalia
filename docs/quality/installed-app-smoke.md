@@ -10,6 +10,8 @@
 
 - Job **`windows-develop-release`** publikuje `develop-latest` **jen pokud** smoke projde (`needs: [windows-build, windows-installed-smoke]`).
 
+- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S01–S17).
+
 ## Příkazy lokálně (Windows)
 
 ```powershell
@@ -25,15 +27,21 @@ Výstupy: `test-results/desktop-smoke/` (screenshoty, `smoke-results.json`).
 
 | ID | Požadavek | Automatizace |
 |----|-----------|--------------|
+| S01 | Knihovna / shell | `[data-route="library"]` |
+| S02 | motiv | Nastavení → `data-theme-pref` |
 | S03/S04 | PDF tlačítko + Ctrl+O | `smoke_open_book` + smoke Ctrl+O → fixture |
 | S05–S06 | výběr textu, knihovna | WDIO výběr v `.textLayer`, reopen karta |
 | S07 | EPUB | `smoke_open_book` |
-| S02 | motiv | Nastavení → data-theme-pref |
-| S09 | hledání | `#search-input` |
+| S08 | Otevřít knihu | `#btn-open-book` viditelné |
+| S09 | hledání | `#search-input` (demo index) |
 | S10 | demo data | `#btn-demo-load` / `#btn-demo-remove` |
-| S12 | restart | `browser.reloadSession()` |
-
-Rozšíření (highlight → `.md`, EPUB výběr myší, D&D, wikilink drill-down) se doplňují ve stejném `tests/desktop/specs/smoke.spec.ts` — **green status platí jen pro to, co spec skutečně assertuje**.
+| S11 | poznámky UI | `data-notes-ready` |
+| S12 | restart | `browser.reloadSession()` → karta přetrvá |
+| S13 | **D&D přidání** (bug #4) | `smoke_drop_book` → zavřít/znovu → restart |
+| S14 | **PDF citace** | `__MARGINALIA_SMOKE_API__` + `smoke_list_quote_files` + Citace + obnova |
+| S15 | **EPUB citace** | stejné pro EPUB + `mark.quote-highlight` |
+| S16 | **wikilink + backlink** | `seedWikilinkBacklink` → `#panel-backlinks-list` |
+| S17 | **nativní Open dialog** | `smoke_dialog_capable` + načtení `dialog` pluginu (bez automatizace okna) |
 
 ## Nepoužívat web build jako důkaz desktopu
 

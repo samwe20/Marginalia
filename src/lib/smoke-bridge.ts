@@ -19,6 +19,9 @@ export async function wireSmokeAutomation(onOpen: SmokeOpenHandler): Promise<voi
   await listen<{ library_root: string; file_path: string }>("marginalia-smoke-open", (ev) => {
     void onOpen(ev.payload.library_root, ev.payload.file_path);
   });
+  await listen<{ library_root: string; file_path: string }>("marginalia-smoke-drop", (ev) => {
+    void onOpen(ev.payload.library_root, ev.payload.file_path);
+  });
   const openFixture = (filePath: string | null | undefined) => {
     if (!filePath || !fixtures.library_root) return;
     void onOpen(fixtures.library_root, filePath);

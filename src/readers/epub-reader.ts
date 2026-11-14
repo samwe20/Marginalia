@@ -55,7 +55,7 @@ export class EpubReader {
         const cfi = view.getCFI?.(range) ?? `/0/0`;
         const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
         this.opts.onHighlight({ text, cfi, anchor });
-        this.paint(range);
+        this.paintHighlight(range);
       },
       this.opts.getMode,
     );
@@ -67,7 +67,26 @@ export class EpubReader {
     this.docText = this.contentRoot?.textContent ?? "";
   }
 
-  private paint(range: Range): void {
+  quoteDraftFromFirstText(): {
+    text: string;
+    cfi: string;
+    anchor: ReturnType<typeof anchorFromEpubSelection>;
+    range: Range;
+  } | null {
+    if (!this.contentRoot || !this.view) return null;
+    const walker = document.createTreeWalker(this.contentRoot, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode() as Text | null;
+    while (node && !node.textContent?.trim()) node = walker.nextNode() as Text | null;
+    if (!node?.textContent?.trim()) return null;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const { start, end, text } = rangeToOffsets(this.contentRoot, range);
+    const cfi = this.view.getCFI?.(range) ?? "/0/0";
+    const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+    return { text, cfi, anchor, range };
+  }
+
+  paintHighlight(range: Range): void {
     const mark = document.createElement("mark");
     mark.className = "quote-highlight";
     try {
@@ -95,7 +114,7 @@ export class EpubReader {
       const located = reanchorInText(this.docText, q.anchor);
       if (!located) continue;
       const range = this.offsetsToRange(located.start, located.end);
-      if (range) this.paint(range);
+      if (range) this.paintHighlight(range);
     }
   }
 

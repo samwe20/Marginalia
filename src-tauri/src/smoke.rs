@@ -58,3 +58,64 @@ pub fn smoke_open_book(app: AppHandle, library_root: String, file_path: String) 
     )
     .map_err(|e| e.to_string())
 }
+
+#[derive(Clone, Serialize)]
+pub struct SmokeDropPayload {
+    pub library_root: String,
+    pub file_path: String,
+}
+
+/// CI: same ingest path as library drag&drop (absolute fixture path).
+#[tauri::command]
+pub fn smoke_drop_book(app: AppHandle, library_root: String, file_path: String) -> Result<(), String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled (set MARGINALIA_SMOKE=1)".into());
+    }
+    let path = std::path::Path::new(&file_path);
+    if !path.is_absolute() {
+        return Err("file_path must be absolute".into());
+    }
+    app.emit(
+        "marginalia-smoke-drop",
+        SmokeDropPayload {
+            library_root,
+            file_path,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Capability gate: dialog plugin allowed in main window (see capabilities/default.json).
+#[tauri::command]
+pub fn smoke_dialog_capable() -> bool {
+    if !smoke_mode() {
+        return false;
+    }
+    const CAPS: &str = include_str!("../capabilities/default.json");
+    CAPS.contains("dialog:allow-open")
+}
+
+#[tauri::command]
+pub fn smoke_list_quote_files(library_root: String, book_slug: String) -> Result<Vec<String>, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    let dir = std::path::Path::new(&library_root)
+        .join("citace")
+        .join(&book_slug);
+    let mut out = Vec::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}

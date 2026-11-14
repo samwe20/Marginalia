@@ -1,6 +1,6 @@
 import { ulid } from "ulidx";
 import type { Anchor } from "./anchor";
-import { bookCardPath, bookSlug, quotePath } from "./paths";
+import { bookCardPath, bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
 import {
   extractQuoteBodyForIndex,
   formatQuoteMarkdown,
@@ -91,6 +91,32 @@ export async function saveQuote(
   await writeText(path, md);
   await indexUpsert(doc, path);
   return { doc, relativePath: path };
+}
+
+export async function loadAllQuotesFromLibrary(libraryRoot: string): Promise<QuoteDocument[]> {
+  if (!libraryRoot) return [];
+  const root = `${libraryRoot}/${LIBRARY_SUBDIRS.quotes}`;
+  const docs: QuoteDocument[] = [];
+  if (isTauri()) {
+    const { readDir } = await import("@tauri-apps/plugin-fs");
+    try {
+      const slugs = await readDir(root);
+      for (const s of slugs) {
+        if (!s.isDirectory || !s.name) continue;
+        docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+      }
+    } catch {
+      return [];
+    }
+    return docs.sort((a, b) => b.meta.updated.localeCompare(a.meta.updated));
+  }
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith("marginalia:") && key.includes("/citace/") && key.endsWith(".md")) {
+      docs.push(parseQuoteMarkdown(localStorage.getItem(key)!));
+    }
+  }
+  return docs;
 }
 
 export async function loadQuotesForBook(libraryRoot: string, slug: string): Promise<QuoteDocument[]> {
