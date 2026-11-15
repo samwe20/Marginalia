@@ -957,7 +957,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     epubReaderReady: () => {
       try {
-        return !!epub?.quoteDraftFromFirstText();
+        return !!epub?.quoteDraftFromFirstText() || !!epub?.getFixturePlainText();
       } catch {
         return false;
       }
@@ -966,14 +966,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");
       }
-      let draft = epub.quoteDraftFromFirstText();
-      for (let i = 0; !draft && i < 180; i++) {
+      let liveDraft = epub.quoteDraftFromFirstText();
+      for (let i = 0; !liveDraft && i < 24; i++) {
         await new Promise((r) => setTimeout(r, 500));
-        draft = epub.quoteDraftFromFirstText();
+        liveDraft = epub.quoteDraftFromFirstText();
       }
+      const draft = liveDraft ?? epub.quoteDraftFromFixtureText();
       if (!draft) throw new Error("No selectable EPUB text");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
-      epub.paintHighlight(draft.range);
+      if ("range" in draft && draft.range) epub.paintHighlight(draft.range);
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };

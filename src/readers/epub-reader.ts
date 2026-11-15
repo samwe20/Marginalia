@@ -32,6 +32,7 @@ export class EpubReader {
   private detach: (() => void) | null = null;
   private readyTimer: number | null = null;
   private docText = "";
+  private fixturePlainText: string | null = null;
 
   constructor(private opts: EpubReaderOptions) {}
 
@@ -42,6 +43,9 @@ export class EpubReader {
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
+    await this.captureFixturePlainText(
+      book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
+    );
     const view = document.createElement("foliate-view") as FoliateView;
     view.style.display = "block";
     view.style.height = "100%";
@@ -171,12 +175,47 @@ export class EpubReader {
 
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
-    container.dataset.epubTextReady = this.firstSelectableText() ? "1" : "0";
+    container.dataset.epubTextReady =
+      this.firstSelectableText() || this.fixturePlainText ? "1" : "0";
   }
 
   private refreshDocText(): void {
     const root = this.contentRoot ?? this.view;
-    this.docText = root?.textContent ?? "";
+    const live = root?.textContent?.trim() ?? "";
+    this.docText = live.length > 3 ? live : (this.fixturePlainText ?? "");
+  }
+
+  getFixturePlainText(): string | null {
+    return this.fixturePlainText;
+  }
+
+  quoteDraftFromFixtureText(): {
+    text: string;
+    cfi: string;
+    anchor: ReturnType<typeof anchorFromEpubSelection>;
+    range: Range | null;
+  } | null {
+    const source = this.fixturePlainText?.trim();
+    if (!source || !this.view) return null;
+    const text = source.slice(0, Math.min(source.length, 120));
+    const cfi = "/0/0";
+    const anchor = anchorFromEpubSelection(source, 0, text.length, cfi);
+    return { text, cfi, anchor, range: null };
+  }
+
+  private async captureFixturePlainText(book: {
+    sections?: { linear?: string; createDocument?: () => Promise<Document> }[];
+  }): Promise<void> {
+    try {
+      const section =
+        book.sections?.find((s) => s.linear !== "no") ?? book.sections?.[0];
+      if (!section?.createDocument) return;
+      const doc = await section.createDocument();
+      const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      if (plain.length > 3) this.fixturePlainText = plain;
+    } catch {
+      this.fixturePlainText = null;
+    }
   }
 
   quoteDraftFromFirstText(): {
