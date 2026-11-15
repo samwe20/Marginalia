@@ -24,6 +24,7 @@ export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
   private detach: (() => void) | null = null;
+  private readyTimer: number | null = null;
   private docText = "";
 
   constructor(private opts: EpubReaderOptions) {}
@@ -43,15 +44,16 @@ export class EpubReader {
     this.view = view;
 
     await view.open(book);
-    this.contentRoot = view.renderer?.root ?? view;
-    this.refreshDocText();
+    await this.waitForReadableContent();
+    const highlightRoot = this.contentRoot ?? view;
 
     this.detach = attachHighlighter(
-      this.contentRoot,
+      highlightRoot,
       (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
       (range) => {
-        if (!this.contentRoot) return;
-        const { start, end, text } = rangeToOffsets(this.contentRoot, range);
+        const root = this.contentRoot ?? highlightRoot;
+        if (!root) return;
+        const { start, end, text } = rangeToOffsets(root, range);
         const cfi = view.getCFI?.(range) ?? `/0/0`;
         const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
         this.opts.onHighlight({ text, cfi, anchor });
@@ -61,19 +63,87 @@ export class EpubReader {
     );
 
     view.addEventListener("relayout", () => {
+      this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
     });
-    this.syncTextReadyFlag();
+    this.beginTextReadyWatch();
+  }
+
+  private waitForReadableContent(): Promise<void> {
+    return new Promise((resolve) => {
+      let tries = 0;
+      const tick = () => {
+        this.contentRoot = this.resolveContentRoot();
+        this.refreshDocText();
+        if (this.contentRoot && this.docText.trim().length > 3) {
+          this.syncTextReadyFlag();
+          resolve();
+          return;
+        }
+        tries += 1;
+        if (tries >= 180) {
+          this.syncTextReadyFlag();
+          resolve();
+          return;
+        }
+        this.readyTimer = window.setTimeout(tick, 400);
+      };
+      tick();
+    });
+  }
+
+  private beginTextReadyWatch(): void {
+    if (this.readyTimer) window.clearTimeout(this.readyTimer);
+    let tries = 0;
+    const tick = () => {
+      this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
+      this.refreshDocText();
+      if (this.docText.trim().length > 3) {
+        this.syncTextReadyFlag();
+        return;
+      }
+      tries += 1;
+      if (tries < 60) this.readyTimer = window.setTimeout(tick, 500);
+      else this.syncTextReadyFlag();
+    };
+    tick();
+  }
+
+  private resolveContentRoot(): HTMLElement | null {
+    if (!this.view) return null;
+    const rendererRoot = this.view.renderer?.root ?? null;
+    const visit = (root: Node): HTMLElement | null => {
+      if (root instanceof HTMLElement) {
+        const text = root.textContent?.trim() ?? "";
+        if (text.length > 3) return root;
+        if (root.shadowRoot) {
+          const inner = visit(root.shadowRoot);
+          if (inner) return inner;
+        }
+        for (const child of root.children) {
+          const hit = visit(child);
+          if (hit) return hit;
+        }
+      } else if (root instanceof DocumentFragment || root instanceof ShadowRoot) {
+        for (const child of root.childNodes) {
+          const hit = visit(child);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    return visit(this.view) ?? rendererRoot ?? this.view;
   }
 
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
-    container.dataset.epubTextReady = this.docText.trim().length > 0 ? "1" : "0";
+    container.dataset.epubTextReady = this.docText.trim().length > 3 ? "1" : "0";
   }
 
   private refreshDocText(): void {
-    this.docText = this.contentRoot?.textContent ?? "";
+    const root = this.contentRoot ?? this.view;
+    this.docText = root?.textContent ?? "";
   }
 
   quoteDraftFromFirstText(): {
@@ -157,10 +227,13 @@ export class EpubReader {
   }
 
   destroy(): void {
+    if (this.readyTimer) window.clearTimeout(this.readyTimer);
+    this.readyTimer = null;
     this.detach?.();
     this.detach = null;
     this.view?.remove();
     this.view = null;
     this.contentRoot = null;
+    this.opts.container.dataset.epubTextReady = "0";
   }
 }

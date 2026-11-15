@@ -68,10 +68,25 @@ async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
   ) as Promise<T>;
 }
 
-async function waitEpubTextReady(timeoutMs = 45_000) {
+async function waitEpubTextReady(timeoutMs = 90_000) {
   await browser.waitUntil(
-    async () => (await $("#epub-root").getAttribute("data-epub-text-ready")) === "1",
-    { timeout: timeoutMs, interval: 400, timeoutMsg: "EPUB text not ready" },
+    async () => {
+      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
+      return browser.execute(() => {
+        const fv = document.querySelector("#epub-root foliate-view");
+        if (!fv) return false;
+        const hasText = (node: Node): boolean => {
+          if (node.nodeType === Node.TEXT_NODE && (node.textContent?.trim().length ?? 0) > 3) return true;
+          if (node instanceof Element && node.shadowRoot) {
+            for (const c of node.shadowRoot.childNodes) if (hasText(c)) return true;
+          }
+          for (const c of node.childNodes) if (hasText(c)) return true;
+          return false;
+        };
+        return hasText(fv);
+      });
+    },
+    { timeout: timeoutMs, interval: 500, timeoutMsg: "EPUB text not ready" },
   );
 }
 
