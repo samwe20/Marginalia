@@ -227,9 +227,22 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect(epubCard).toBeDisplayed();
       await epubCard.click();
       await waitEpubTextReady(90_000);
-      const hasMark = await $("#epub-root mark.quote-highlight").isExisting();
-      if (!hasMark) await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      else await expect($("#epub-root mark.quote-highlight")).toBeExisting();
+      await browser.pause(1000);
+      await $('[data-route="quotes"]').click();
+      await browser.pause(1000);
+      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
+      await $('[data-route="library"]').click();
+      await browser.pause(400);
+      await epubCard.click();
+      await waitEpubTextReady(60_000);
+      await browser.execute(function showReaderQuotes() {
+        var app = document.querySelector(".app");
+        if (app && app.classList.contains("backlinks-hidden")) {
+          document.getElementById("btn-backlinks")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        }
+      });
+      await browser.pause(500);
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
       record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
     } catch (e) {
       record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
