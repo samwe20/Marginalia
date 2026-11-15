@@ -960,7 +960,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");
       }
-      const draft = epub.quoteDraftFromFirstText();
+      let draft = epub.quoteDraftFromFirstText();
+      for (let i = 0; !draft && i < 180; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        draft = epub.quoteDraftFromFirstText();
+      }
       if (!draft) throw new Error("No selectable EPUB text");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
       epub.paintHighlight(draft.range);

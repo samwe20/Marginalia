@@ -53,6 +53,11 @@ export class EpubReader {
     if (view.init) await view.init({ showTextStart: true });
     else if (view.goToTextStart) await view.goToTextStart();
     else await view.goTo(0);
+    const paginator = view.renderer as { firstSection?: () => Promise<void>; goTo?: (target: unknown) => Promise<void> };
+    if (!(view.renderer?.getContents?.() ?? []).length) {
+      if (paginator?.firstSection) await paginator.firstSection();
+      else if (paginator?.goTo) await paginator.goTo({ index: 0 });
+    }
     view.renderer?.addEventListener?.("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
@@ -93,6 +98,15 @@ export class EpubReader {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
+        const contents = this.view?.renderer?.getContents?.() ?? [];
+        const loaded = contents.find((c) => (c.doc.body?.textContent?.trim().length ?? 0) > 3);
+        if (loaded?.doc.body) {
+          this.contentRoot = loaded.doc.body;
+          this.refreshDocText();
+          this.syncTextReadyFlag();
+          resolve();
+          return;
+        }
         this.contentRoot = this.resolveContentRoot();
         this.refreshDocText();
         if (this.contentRoot && this.docText.trim().length > 3) {
