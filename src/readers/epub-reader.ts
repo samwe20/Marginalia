@@ -60,7 +60,16 @@ export class EpubReader {
       this.opts.getMode,
     );
 
-    view.addEventListener("relayout", () => this.refreshDocText());
+    view.addEventListener("relayout", () => {
+      this.refreshDocText();
+      this.syncTextReadyFlag();
+    });
+    this.syncTextReadyFlag();
+  }
+
+  private syncTextReadyFlag(): void {
+    const { container } = this.opts;
+    container.dataset.epubTextReady = this.docText.trim().length > 0 ? "1" : "0";
   }
 
   private refreshDocText(): void {

@@ -862,7 +862,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         },
       });
       await epub.load(new File([buffer], fileName, { type: "application/epub+zip" }));
-      if ((epubRoot.textContent?.trim().length ?? 0) > 0) epubRoot.dataset.epubTextReady = "1";
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
