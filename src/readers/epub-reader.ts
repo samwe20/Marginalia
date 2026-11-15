@@ -14,9 +14,15 @@ export interface EpubReaderOptions {
 
 type FoliateView = HTMLElement & {
   open: (book: unknown) => Promise<void>;
-  goTo: (target: string) => Promise<void>;
+  init?: (opts: { showTextStart?: boolean }) => Promise<void>;
+  goToTextStart?: () => Promise<void>;
+  goTo: (target: string | number) => Promise<void>;
   getCFI: (range: Range) => string;
-  renderer?: { root?: HTMLElement };
+  renderer?: {
+    root?: HTMLElement;
+    getContents?: () => { index: number; doc: Document }[];
+    addEventListener?: (type: string, fn: (e: Event) => void) => void;
+  };
 };
 
 /** Thin wrapper around foliate-js `foliate-view` custom element. */
@@ -44,6 +50,19 @@ export class EpubReader {
     this.view = view;
 
     await view.open(book);
+    if (view.init) await view.init({ showTextStart: true });
+    else if (view.goToTextStart) await view.goToTextStart();
+    else await view.goTo(0);
+    view.renderer?.addEventListener?.("load", () => {
+      this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
+      this.refreshDocText();
+      this.syncTextReadyFlag();
+    });
+    view.renderer?.addEventListener?.("relocate", () => {
+      this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
+      this.refreshDocText();
+      this.syncTextReadyFlag();
+    });
     await this.waitForReadableContent();
     const highlightRoot = this.contentRoot ?? view;
 
@@ -167,6 +186,14 @@ export class EpubReader {
   }
 
   private firstSelectableText(): { node: Text; root: HTMLElement } | null {
+    const contents = this.view?.renderer?.getContents?.() ?? [];
+    for (const { doc } of contents) {
+      const body = doc.body;
+      if (body) {
+        const hit = this.findTextInSubtree(body);
+        if (hit) return hit;
+      }
+    }
     const candidates = [
       this.resolveContentRoot(),
       this.contentRoot,
