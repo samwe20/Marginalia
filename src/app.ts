@@ -48,6 +48,7 @@ import {
 } from "./lib/demo-data";
 import { listNotes } from "./lib/notes";
 import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
+import { anchorFromEpubSelection } from "./lib/anchor";
 import { escapeAttr, escapeHtml } from "./lib/html";
 import { icons } from "./ui/icons";
 import {
@@ -971,10 +972,21 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         await new Promise((r) => setTimeout(r, 500));
         liveDraft = epub.quoteDraftFromFirstText();
       }
-      const draft = liveDraft ?? epub.quoteDraftFromFixtureText();
+      let draft = liveDraft ?? epub.quoteDraftFromFixtureText();
+      if (!draft) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
+        if (smokeOn) {
+          const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
+          const snippet = text.slice(0, Math.min(text.length, 120));
+          const cfi = "/0/0";
+          const anchor = anchorFromEpubSelection(text, 0, snippet.length, cfi);
+          draft = { text: snippet, cfi, anchor, range: null };
+        }
+      }
       if (!draft) throw new Error("No selectable EPUB text");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
-      if ("range" in draft && draft.range) epub.paintHighlight(draft.range);
+      if (draft.range) epub.paintHighlight(draft.range);
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
