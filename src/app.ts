@@ -29,7 +29,13 @@ import {
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import { installSmokeTestApi } from "./lib/smoke-test-api";
 import { smokeVerifyDialogPlugin } from "./lib/open-book";
-import { ensureDefaultLibraryRoot } from "./lib/library-root";
+import { createDocumentsMarginaliaFolder, ensureLibrarySubdirs } from "./lib/library-root";
+import { syncAllBooksFromLibraryFolder } from "./lib/library-import";
+import {
+  hideLibrarySetupModal,
+  isLibrarySetupModalVisible,
+  showLibrarySetupModal,
+} from "./ui/library-setup-modal";
 import {
   getFolderPickerInvocationCount,
   recordFolderPickerInvocation,
@@ -133,7 +139,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       setRoute("notes");
     },
     createNoteWithTitle: async (title: string) => {
-      await ensureLibraryRoot();
+      if (!(await requireLibraryConfigured())) return;
       await createNoteFromTitle(state.libraryRoot, title, linkIndex, {
         openNoteEditor: (id) => {
           activeNoteId = id;
@@ -323,7 +329,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (route === "quotes") void renderQuotesOverview();
     if (route === "notes") {
       void (async () => {
-        await ensureLibraryRoot();
+        if (!(await requireLibraryConfigured())) return;
         void renderNotesView(
           stageMain,
           {
@@ -402,13 +408,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
-        <p class="page-intro">Otevřete PDF nebo EPUB, nebo přetáhněte soubor do oblasti níže.</p>
+        <p class="page-intro">PDF a EPUB ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
         <div class="page-actions">
-          <button type="button" class="primary-btn" id="btn-open-book" data-testid="btn-open-book">Otevřít knihu…</button>
-          <button type="button" class="ghost-btn solid" id="btn-library-folder">Složka knihovny…</button>
-        </div>
-        <div class="drop-zone" id="drop-zone" data-testid="drop-zone" tabindex="0" aria-label="Oblast pro přetažení knihy">
-          Přetáhněte sem PDF nebo EPUB
+          <button type="button" class="primary-btn" id="btn-rescan-books" data-testid="btn-rescan-books">Obnovit knihy ze složky</button>
+          <button type="button" class="ghost-btn solid" id="btn-library-folder">Změnit složku knihovny…</button>
         </div>
         ${
           demoBooks.length
@@ -438,25 +441,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 .join("")}</div></section>`
             : demoBooks.length
               ? ""
-              : `<p class="muted">Knihovna je prázdná — začněte otevřením knihy nebo načtěte ukázková data v Nastavení.</p>`
+              : `<p class="muted">Ve složce knihovny zatím nejsou PDF ani EPUB — přidejte soubory do složky a zvolte Obnovit knihy.</p>`
         }
       </div>
     `;
 
-    stageMain.querySelector("#btn-open-book")?.addEventListener("click", () => void promptOpenBook());
-    stageMain.querySelector("#btn-library-folder")?.addEventListener("click", () => void pickLibrary());
-    const zone = stageMain.querySelector("#drop-zone")!;
-    zone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      zone.classList.add("drop-zone--active");
-    });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drop-zone--active"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("drop-zone--active");
-      const file = (e as DragEvent).dataTransfer?.files?.[0];
-      if (file) void openBookFile(file);
-    });
+    stageMain.querySelector("#btn-rescan-books")?.addEventListener("click", () => void rescanBooksFromFolder());
+    stageMain.querySelector("#btn-library-folder")?.addEventListener("click", () => void pickLibrary(true));
     stageMain.querySelectorAll(".book-card:not(.book-card--demo)").forEach((card) => {
       card.addEventListener("click", () => {
         const el = card as HTMLElement;
@@ -720,7 +711,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         <p class="muted">Stav: ${demoOn ? "ukázková data jsou aktivní" : "vypnuto (výchozí)"}</p>
       </div>
     `;
-    stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary());
+    stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary(true));
     stageMain.querySelectorAll("[data-theme-pref]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const pref = (btn as HTMLElement).dataset.themePref as "system" | "light" | "dark";
@@ -758,9 +749,51 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   };
 
-  const ensureLibraryRoot = async (): Promise<boolean> => {
+  const pushRecentFromImport = (book: LibraryBookEntry) => {
+    pushRecent({ ...book, updated: book.updated || new Date().toISOString() });
+  };
+
+  const rescanBooksFromFolder = async () => {
+    if (!(await requireLibraryConfigured())) return;
+    const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+    toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové PDF/EPUB", n ? "success" : "info");
+    if (state.route === "library") await renderLibrary();
+  };
+
+  const finishLibrarySetup = async (root: string) => {
+    await setLibraryRoot(root);
+    await ensureLibrarySubdirs(root);
+    await openLibraryIndex(root);
+    setLibraryPath(root, root);
+    setStatus(`Knihovna: ${root}`);
+    hideLibrarySetupModal();
+    const n = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport);
+    toast(`Knihovna nastavena — načteno ${n} knih`, "success");
+    if (state.route === "settings") renderSettings();
+    if (state.route === "library") await renderLibrary();
+  };
+
+  const requireLibraryConfigured = async (): Promise<boolean> => {
     if (state.libraryRoot) return true;
-    const root = await ensureDefaultLibraryRoot({
+    openLibrarySetupModal();
+    return false;
+  };
+
+  const openLibrarySetupModal = () => {
+    showLibrarySetupModal({
+      onChooseFolder: () => void pickLibrary(false),
+      onCreateFolder: () => void createNewLibraryFolder(),
+    });
+  };
+
+  const createNewLibraryFolder = async () => {
+    if (!isTauri()) {
+      state.libraryRoot = "/Marginalia";
+      localStorage.setItem("marginalia.libraryRoot", state.libraryRoot);
+      await finishLibrarySetup(state.libraryRoot);
+      return;
+    }
+    const root = await createDocumentsMarginaliaFolder({
       setLibraryRoot,
       openLibraryIndex,
       setLibraryPath,
@@ -768,11 +801,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       renderSettings,
       route: state.route,
     });
-    state.libraryRoot = root;
-    return true;
+    await finishLibrarySetup(root);
   };
 
-  const pickLibrary = async () => {
+  const pickLibrary = async (_settingsFlow = false) => {
     if (isTauri()) {
       recordFolderPickerInvocation();
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -781,19 +813,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         multiple: false,
         title: "Vyberte složku knihovny",
       });
-      if (typeof selected === "string") {
-        await setLibraryRoot(selected);
-        await openLibraryIndex(selected);
-        setLibraryPath(selected, selected);
-        setStatus(`Knihovna: ${selected}`);
-        toast("Složka knihovny nastavena", "success");
-        if (state.route === "settings") renderSettings();
-      }
+      if (typeof selected === "string") await finishLibrarySetup(selected);
     } else {
-      state.libraryRoot = "/Marginalia";
-      localStorage.setItem("marginalia.libraryRoot", state.libraryRoot);
-      setLibraryPath("Web režim (localStorage)");
-      toast("Web režim — localStorage", "info");
+      await finishLibrarySetup("/Marginalia");
     }
   };
 
@@ -816,6 +838,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const promptOpenBook = async () => {
+    if (!(await requireLibraryConfigured())) return;
     try {
       const fromDialog = await pickBookFileViaDialog();
       if (fromDialog) {
@@ -844,7 +867,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       sha256: sha,
       filePath: opts.storedPath ?? fileName,
     };
-    if (!(await ensureLibraryRoot())) return;
+    if (!(await requireLibraryConfigured())) return;
     let slug = opts.slug;
     if (!opts.skipPersist) {
       const persisted = await persistBookFile(state.libraryRoot, state.book, buffer, fileName);
@@ -916,7 +939,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const reopenRecentBook = async (entry: RecentBook) => {
-    if (!(await ensureLibraryRoot())) return;
+    if (!(await requireLibraryConfigured())) return;
     let storedPath = entry.filePath;
     const card = await loadBookCard(state.libraryRoot, entry.slug);
     if (card?.path) storedPath = card.path;
@@ -955,7 +978,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
-    if (!libraryRoot) await ensureLibraryRoot();
+    if (!libraryRoot && !(await requireLibraryConfigured())) return;
     if (isTauri()) {
       const parent = filePath.replace(/[/\\][^/\\]+$/, "");
       if (parent) {
@@ -1014,6 +1037,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       localStorage.removeItem("marginalia.recentBooks");
       resetFolderPickerInvocationCount();
       setLibraryPath("Žádná knihovna");
+      showLibrarySetupModal({
+        onChooseFolder: () => void pickLibrary(false),
+        onCreateFolder: () => void createNewLibraryFolder(),
+      });
       pdf?.destroy();
       epub?.destroy();
       pdf = null;
@@ -1034,6 +1061,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         throw new Error(`openBookAtPath failed for ${filePath}`);
       }
     },
+    finishLibrarySetup: async (libraryRoot: string) => {
+      await finishLibrarySetup(libraryRoot);
+      return (await listBooksForLibrary()).length;
+    },
+    isSetupModalVisible: () => isLibrarySetupModalVisible(),
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");
@@ -1053,8 +1085,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     verifyDialogPlugin: smokeVerifyDialogPlugin,
     seedWikilinkBacklink: async () => {
-      await ensureLibraryRoot();
-      if (!state.libraryRoot) throw new Error("No library root");
+      if (!(await requireLibraryConfigured())) throw new Error("No library root");
       const targetTitle = "Smoke cíl";
       const target = createBlankNote(targetTitle);
       await saveNote(state.libraryRoot, target);
@@ -1138,8 +1169,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   }
   if (libraryRoot) {
     await setLibraryRoot(libraryRoot);
+    await ensureLibrarySubdirs(libraryRoot);
     void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
+    void syncAllBooksFromLibraryFolder(libraryRoot, pushRecentFromImport).then(() => {
+      if (state.route === "library") void renderLibrary();
+    });
+  } else {
+    openLibrarySetupModal();
   }
 
   void reindexLinks().then(() => setRoute("library"));

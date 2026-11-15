@@ -100,59 +100,43 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S18 first-run: open book without folder dialog, default library, persist", async () => {
+  it("S18 first-run: setup modal → library folder → auto-scan books", async () => {
     try {
       await invoke("smoke_reset_first_run");
       await callSmokeApi("resetFirstRunClientState");
-      await browser.pause(600);
+      await browser.pause(800);
+      if (!(await callSmokeApi<boolean>("isSetupModalVisible"))) {
+        throw new Error("setup modal not shown on fresh install");
+      }
       const pickersBefore = await callSmokeApi<number>("getFolderPickerInvocationCount");
-      const libraryLabel = await $("#library-path").getText();
-      if (!/žádná knihovna/i.test(libraryLabel)) {
-        throw new Error(`expected empty library label, got: ${libraryLabel}`);
+      const loaded = (await callSmokeApi<number>("finishLibrarySetup", library)) ?? 0;
+      if (loaded < 1) throw new Error(`expected books from folder scan, got ${loaded}`);
+      if (await callSmokeApi<boolean>("isSetupModalVisible")) {
+        throw new Error("setup modal still visible after finishLibrarySetup");
       }
-      try {
-        await callSmokeApi("openBookAtPath", pdfPath, "");
-      } catch (e) {
-        const status = await $("#status").getText();
-        throw new Error(`${e}; status=${status}`);
+      const pickersAfter = await callSmokeApi<number>("getFolderPickerInvocationCount");
+      if (pickersAfter !== pickersBefore) {
+        throw new Error(`unexpected folder picker during setup (${pickersBefore} → ${pickersAfter})`);
       }
-      await waitPdfTextReady();
-      const pickersAfterOpen = await callSmokeApi<number>("getFolderPickerInvocationCount");
-      if (pickersAfterOpen !== pickersBefore) {
-        throw new Error(`folder picker opened during first-run (${pickersBefore} → ${pickersAfterOpen})`);
-      }
-      const root = await callSmokeApi<string>("getLibraryRoot");
-      const expected = (await invoke("smoke_expected_documents_library")) as string;
-      if (root.replace(/\\/g, "/").toLowerCase() !== expected.replace(/\\/g, "/").toLowerCase()) {
-        throw new Error(`library root mismatch: ${root} vs ${expected}`);
-      }
-      await $("#btn-back-library").click();
-      await browser.pause(600);
+      await browser.pause(800);
       const card = await $(".book-card:not(.book-card--demo)");
       await expect(card).toBeDisplayed();
-      await callSmokeApi("openBookAtPath", epubPath, "");
-      await browser.pause(5000);
-      await waitEpubTextReady(120_000);
-      const pickersAfterDrop = await callSmokeApi<number>("getFolderPickerInvocationCount");
-      if (pickersAfterDrop !== pickersBefore) {
-        throw new Error(`folder picker during first-run D&D (${pickersBefore} → ${pickersAfterDrop})`);
-      }
+      await card.click();
+      await waitPdfTextReady();
       await $("#btn-back-library").click();
       await browser.pause(600);
       await browser.reloadSession();
       await browser.pause(4500);
       const rootAfter = await callSmokeApi<string>("getLibraryRoot");
-      if (!rootAfter) throw new Error("library root missing after restart");
+      if (rootAfter !== library) throw new Error(`library root after restart: ${rootAfter}`);
       await $('[data-route="library"]').click();
       await browser.pause(800);
       const cards = await $$(".book-card:not(.book-card--demo)");
-      if ((await cards.length) < 1) throw new Error("no library cards after first-run restart");
-      const adopted = await callSmokeApi<string>("adoptFixtureLibrary");
-      if (adopted !== library) throw new Error(`fixture library adopt failed: ${adopted} vs ${library}`);
+      if ((await cards.length) < 1) throw new Error("no library cards after restart");
       await saveScreenshot("smoke-first-run.png");
-      record("S18", "First-run open + D&D + default library + restart", true, root);
+      record("S18", "Setup modal + auto-scan + reopen after restart", true, `books=${loaded}`);
     } catch (e) {
-      record("S18", "First-run open + D&D + default library + restart", false, String(e));
+      record("S18", "Setup modal + auto-scan + reopen after restart", false, String(e));
       throw e;
     }
   });
@@ -292,8 +276,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S08 open-book button visible", async () => {
     try {
       await $('[data-route="library"]').click();
-      await expect($('[data-testid="btn-open-book"]')).toBeDisplayed();
-      record("S08", "Otevřít knihu button", true);
+      await expect($('[data-testid="btn-rescan-books"]')).toBeDisplayed();
+      record("S08", "Obnovit knihy ze složky", true);
     } catch (e) {
       record("S08", "Otevřít knihu button", false, String(e));
       throw e;

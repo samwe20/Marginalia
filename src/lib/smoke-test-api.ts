@@ -16,6 +16,8 @@ export type SmokeTestApi = {
   resetFirstRunClientState: () => Promise<void>;
   adoptFixtureLibrary: () => Promise<string>;
   openBookAtPath: (filePath: string, libraryRoot?: string) => Promise<void>;
+  finishLibrarySetup: (libraryRoot: string) => Promise<number>;
+  isSetupModalVisible: () => boolean;
 };
 
 declare global {

@@ -7,18 +7,10 @@ const fixtures = join(process.cwd(), "tests", "fixtures");
 test.describe("open book (web build)", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector(".sidebar");
     await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+    await page.reload();
     await page.locator('.nav-item[data-route="library"]').click();
-    await page.waitForSelector("#btn-open-book");
-  });
-
-  test("Otevřít knihu spustí výběr souboru", async ({ page }) => {
-    const [chooser] = await Promise.all([
-      page.waitForEvent("filechooser"),
-      page.locator("#btn-open-book").click(),
-    ]);
-    expect(chooser.isMultiple()).toBe(false);
+    await page.waitForSelector('[data-testid="btn-rescan-books"]');
   });
 
   test("PDF má interaktivní textLayer po otevření", async ({ page }) => {

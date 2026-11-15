@@ -418,6 +418,65 @@ input {
   margin-bottom: 1.35rem;
 }
 
+.setup-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+}
+
+.setup-modal[hidden] {
+  display: none;
+}
+
+.setup-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 35%, #000 65%);
+  opacity: 0.55;
+}
+
+.setup-modal__panel {
+  position: relative;
+  z-index: 1;
+  width: min(28rem, 100%);
+  padding: 1.75rem 1.5rem;
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--muted) 22%, transparent);
+  box-shadow: 0 24px 48px color-mix(in srgb, #000 22%, transparent);
+}
+
+.setup-modal__panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.35rem;
+}
+
+.setup-modal__lead {
+  margin: 0 0 0.65rem;
+  line-height: 1.5;
+}
+
+.setup-modal__hint {
+  margin: 0 0 1.25rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.setup-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+body.setup-modal-open .workspace {
+  pointer-events: none;
+  user-select: none;
+  filter: blur(1px);
+}
+
 .drop-zone {
   border: 1.5px dashed color-mix(in srgb, var(--muted) 45%, transparent);
   border-radius: var(--radius-md);
