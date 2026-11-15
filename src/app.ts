@@ -954,6 +954,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
+    if (isTauri()) {
+      const parent = filePath.replace(/[/\\][^/\\]+$/, "");
+      if (parent) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("allow_library_path", { path: parent });
+      }
+    }
     if (libraryRoot) await setLibraryRoot(libraryRoot);
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const bytes = await readFile(filePath);

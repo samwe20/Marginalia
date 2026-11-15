@@ -66,18 +66,16 @@ export class EpubReader {
     this.view = view;
 
     await view.open(book);
-    const startIndex = await this.findBestReadableSectionIndex(
-      book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
-    );
-    if (view.init) await view.init({ showTextStart: false });
-    const renderer = view.renderer as { goTo?: (target: { index: number }) => Promise<void> };
-    if (renderer?.goTo) await renderer.goTo({ index: startIndex });
+    const sectionBook = book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] };
+    const startIndex = await this.findBestReadableSectionIndex(sectionBook);
+    const paginator = view.renderer as {
+      firstSection?: () => Promise<void>;
+      goTo?: (target: { index: number }) => Promise<void>;
+      next?: () => Promise<void>;
+    };
+    if (paginator?.goTo) await paginator.goTo({ index: startIndex });
     else await view.goTo(startIndex);
-    const paginator = view.renderer as { firstSection?: () => Promise<void>; goTo?: (target: unknown) => Promise<void> };
-    if (!(view.renderer?.getContents?.() ?? []).length) {
-      if (paginator?.firstSection) await paginator.firstSection();
-      else if (paginator?.goTo) await paginator.goTo({ index: startIndex });
-    }
+    await this.ensureVisibleSection(paginator, view, sectionBook, startIndex);
     view.renderer?.addEventListener?.("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
@@ -126,7 +124,9 @@ export class EpubReader {
           return;
         }
         tries += 1;
+        if (tries >= 60) this.mountPlainTextFallbackIfNeeded();
         if (tries >= 180) {
+          this.mountPlainTextFallbackIfNeeded();
           this.syncTextReadyFlag();
           resolve();
           return;
@@ -135,6 +135,25 @@ export class EpubReader {
       };
       tick();
     });
+  }
+
+  /** When foliate leaves the paginator empty (large EPUB / WebView2), show parsed spine text in-page. */
+  private mountPlainTextFallbackIfNeeded(): void {
+    if (this.visibleDomTextLength() > 3 || !this.fixturePlainText) return;
+    const { container } = this.opts;
+    if (container.querySelector(".epub-fallback-text")) {
+      this.contentRoot = container.querySelector(".epub-fallback-text");
+      this.refreshDocText();
+      this.syncTextReadyFlag();
+      return;
+    }
+    const article = document.createElement("article");
+    article.className = "epub-fallback-text";
+    article.textContent = this.fixturePlainText.slice(0, 200_000);
+    container.appendChild(article);
+    this.contentRoot = article;
+    this.refreshDocText();
+    this.syncTextReadyFlag();
   }
 
   /** Visible text in foliate DOM (not ZIP/Rust fallback). */
@@ -146,6 +165,32 @@ export class EpubReader {
     }
     const root = this.resolveContentRoot();
     return root?.textContent?.trim().length ?? 0;
+  }
+
+  private async ensureVisibleSection(
+    paginator: { goTo?: (target: { index: number }) => Promise<void>; next?: () => Promise<void> } | undefined,
+    view: FoliateView,
+    book: { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
+    startIndex: number,
+  ): Promise<void> {
+    const tryIndex = async (index: number) => {
+      if (paginator?.goTo) await paginator.goTo({ index });
+      else await view.goTo(index);
+      await new Promise((r) => window.setTimeout(r, 350));
+    };
+    const sections = book.sections ?? [];
+    const linearIndices = sections
+      .map((s, i) => (s?.linear !== "no" ? i : -1))
+      .filter((i) => i >= 0);
+    const candidates = [startIndex, ...linearIndices.filter((i) => i !== startIndex)].slice(0, 14);
+    for (const index of candidates) {
+      await tryIndex(index);
+      if (this.visibleDomTextLength() > 3) return;
+    }
+    for (let step = 0; step < 6 && this.visibleDomTextLength() <= 3; step++) {
+      await paginator?.next?.();
+      await new Promise((r) => window.setTimeout(r, 350));
+    }
   }
 
   private async findBestReadableSectionIndex(book: {
