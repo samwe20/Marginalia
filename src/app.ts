@@ -1060,6 +1060,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return lib;
     },
     openBookAtPath: async (filePath: string, libraryRoot = "") => {
+      const root = libraryRoot || state.libraryRoot;
+      if (!root) {
+        throw new Error("open blocked before library setup");
+      }
       await openBookFromAbsolutePath(libraryRoot, filePath);
       if (state.route !== "reader" || !state.book) {
         throw new Error(`openBookAtPath failed for ${filePath}`);
@@ -1068,6 +1072,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     finishLibrarySetup: async (libraryRoot: string) => {
       await finishLibrarySetup(libraryRoot);
       return (await listBooksForLibrary()).length;
+    },
+    rescanBooksFromFolder: async () => {
+      if (!(await requireLibraryConfigured())) throw new Error("No library root");
+      const imported = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+      if (state.route === "library") await renderLibrary();
+      return { imported, total: (await listBooksForLibrary()).length };
+    },
+    countScannedBookCards: async () => {
+      return document.querySelectorAll(".book-card:not(.book-card--demo)").length;
     },
     isSetupModalVisible: () => isLibrarySetupModalVisible(),
     createEpubQuoteFromSelection: async () => {

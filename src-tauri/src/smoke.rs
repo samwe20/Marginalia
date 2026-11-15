@@ -225,3 +225,28 @@ pub fn smoke_list_quote_files(library_root: String, book_slug: String) -> Result
     out.sort();
     Ok(out)
 }
+
+/// CI: copy a fixture file into the library folder (rescan / „Obnovit knihy ze složky“).
+#[tauri::command]
+pub fn smoke_stage_file_in_library(
+    library_root: String,
+    dest_file_name: String,
+    source_path: String,
+) -> Result<String, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    let src = std::path::Path::new(&source_path);
+    if !src.is_file() {
+        return Err(format!("source missing: {source_path}"));
+    }
+    let dest = std::path::Path::new(&library_root).join(&dest_file_name);
+    if dest_file_name.contains("..") || std::path::Path::new(&dest_file_name).is_absolute() {
+        return Err("dest_file_name must be a simple file name".into());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::copy(src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}

@@ -17,6 +17,8 @@ export type SmokeTestApi = {
   adoptFixtureLibrary: () => Promise<string>;
   openBookAtPath: (filePath: string, libraryRoot?: string) => Promise<void>;
   finishLibrarySetup: (libraryRoot: string) => Promise<number>;
+  rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
+  countScannedBookCards: () => Promise<number>;
   isSetupModalVisible: () => boolean;
 };
 

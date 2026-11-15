@@ -26,15 +26,18 @@ if (-not $appExe) { throw "Installed Marginalia.exe not found under $installDir"
 $libraryRoot = Join-Path $env:LOCALAPPDATA "MarginaliaSmokeLibrary"
 if (Test-Path $libraryRoot) { Remove-Item -Recurse -Force $libraryRoot }
 New-Item -ItemType Directory -Force -Path $libraryRoot | Out-Null
-Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.pdf") $libraryRoot
+$shelfDir = Join-Path $libraryRoot "shelf"
+New-Item -ItemType Directory -Force -Path $shelfDir | Out-Null
+Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.pdf") $shelfDir
 Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.epub") $libraryRoot
 
 $env:MARGINALIA_APP_EXE = $appExe.FullName
 $env:MARGINALIA_SMOKE_LIBRARY = $libraryRoot
 $env:MARGINALIA_SMOKE = "1"
 $env:MARGINALIA_SMOKE_DEFER_LIBRARY = "1"
-$env:MARGINALIA_FIXTURE_PDF = Join-Path $libraryRoot "sample.pdf"
+$env:MARGINALIA_FIXTURE_PDF = Join-Path $shelfDir "sample.pdf"
 $env:MARGINALIA_FIXTURE_EPUB = Join-Path $libraryRoot "sample.epub"
+$env:MARGINALIA_FIXTURE_PDF_EXTRA = Join-Path $repoRoot "tests/fixtures/sample.pdf"
 $resultsDir = Join-Path $repoRoot "test-results\desktop-smoke"
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 $env:SMOKE_ARTIFACTS_DIR = $resultsDir

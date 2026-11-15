@@ -56,6 +56,7 @@ pub fn run() {
             smoke::smoke_reset_first_run,
             smoke::smoke_expected_documents_library,
             smoke::smoke_adopt_fixture_library,
+            smoke::smoke_stage_file_in_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");
