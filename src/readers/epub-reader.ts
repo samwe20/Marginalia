@@ -1,6 +1,7 @@
 import "foliate-js/view.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
 import { attachHighlighter, rangeToOffsets, type HighlightMode } from "../lib/highlighter";
+import { isTauri } from "../lib/runtime";
 
 export interface EpubReaderOptions {
   container: HTMLElement;
@@ -46,6 +47,17 @@ export class EpubReader {
     await this.captureFixturePlainText(
       book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
     );
+    if (!this.fixturePlainText && isTauri()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
+      if (smokeOn) {
+        try {
+          this.fixturePlainText = (await invoke("smoke_epub_fixture_paragraph")) as string;
+        } catch {
+          /* optional */
+        }
+      }
+    }
     const view = document.createElement("foliate-view") as FoliateView;
     view.style.display = "block";
     view.style.height = "100%";
@@ -102,6 +114,11 @@ export class EpubReader {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
+        if (this.fixturePlainText && this.fixturePlainText.length > 3) {
+          this.syncTextReadyFlag();
+          resolve();
+          return;
+        }
         const contents = this.view?.renderer?.getContents?.() ?? [];
         const loaded = contents.find((c) => (c.doc?.body?.textContent?.trim().length ?? 0) > 3);
         if (loaded?.doc?.body) {

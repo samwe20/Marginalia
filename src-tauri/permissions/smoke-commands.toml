@@ -8,4 +8,5 @@ commands.allow = [
   "smoke_drop_book",
   "smoke_dialog_capable",
   "smoke_list_quote_files",
+  "smoke_epub_fixture_paragraph",
 ]

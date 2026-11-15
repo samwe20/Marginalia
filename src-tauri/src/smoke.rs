@@ -96,6 +96,36 @@ pub fn smoke_dialog_capable() -> bool {
 }
 
 #[tauri::command]
+/// CI: first text paragraph from fixture EPUB (chapter.xhtml), without foliate DOM.
+#[tauri::command]
+pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    let path = std::env::var("MARGINALIA_FIXTURE_EPUB").map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let mut chapter = archive.by_name("chapter.xhtml").map_err(|e| e.to_string())?;
+    let mut xml = String::new();
+    use std::io::Read;
+    chapter.read_to_string(&mut xml).map_err(|e| e.to_string())?;
+    let re_body = regex::Regex::new(r"(?is)<body[^>]*>(.*?)</body>").map_err(|e| e.to_string())?;
+    let body = re_body
+        .captures(&xml)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str())
+        .unwrap_or(&xml);
+    let re_tags = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
+    let text = re_tags.replace_all(body, " ").to_string();
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.len() < 3 {
+        return Err("fixture epub has no readable text".into());
+    }
+    Ok(collapsed)
+}
+
+#[tauri::command]
 pub fn smoke_list_quote_files(library_root: String, book_slug: String) -> Result<Vec<String>, String> {
     if !smoke_mode() {
         return Err("Smoke mode is disabled".into());
