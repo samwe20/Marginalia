@@ -745,10 +745,35 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   };
 
+  /** Bez nastavené knihovny nevoláme výběr složky uprostřed „Otevřít knihu“ — jen výchozí cestu. */
+  const ensureLibraryRoot = async (): Promise<boolean> => {
+    if (state.libraryRoot) return true;
+    if (isTauri()) {
+      const { join, documentDir } = await import("@tauri-apps/api/path");
+      const { exists, mkdir } = await import("@tauri-apps/plugin-fs");
+      const root = await join(await documentDir(), "Marginalia");
+      if (!(await exists(root))) await mkdir(root, { recursive: true });
+      await setLibraryRoot(root);
+      await openLibraryIndex(root);
+      setLibraryPath(root, root);
+      toast("Výchozí knihovna v Dokumentech (změníte v Nastavení)", "info");
+      if (state.route === "settings") renderSettings();
+      return true;
+    }
+    state.libraryRoot = "/Marginalia";
+    localStorage.setItem("marginalia.libraryRoot", state.libraryRoot);
+    setLibraryPath("Web režim (localStorage)");
+    return true;
+  };
+
   const pickLibrary = async () => {
     if (isTauri()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ directory: true, multiple: false });
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Vyberte složku knihovny",
+      });
       if (typeof selected === "string") {
         await setLibraryRoot(selected);
         await openLibraryIndex(selected);
@@ -812,7 +837,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       sha256: sha,
       filePath: opts.storedPath ?? fileName,
     };
-    if (!state.libraryRoot) await pickLibrary();
+    if (!(await ensureLibraryRoot())) return;
     let slug = opts.slug;
     if (!opts.skipPersist) {
       const persisted = await persistBookFile(state.libraryRoot, state.book, buffer, fileName);
@@ -883,7 +908,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const reopenRecentBook = async (entry: RecentBook) => {
-    if (!state.libraryRoot) await pickLibrary();
+    if (!(await ensureLibraryRoot())) return;
     let storedPath = entry.filePath;
     const card = await loadBookCard(state.libraryRoot, entry.slug);
     if (card?.path) storedPath = card.path;
