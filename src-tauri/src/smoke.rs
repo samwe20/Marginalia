@@ -95,7 +95,6 @@ pub fn smoke_dialog_capable() -> bool {
     CAPS.contains("dialog:allow-open")
 }
 
-#[tauri::command]
 /// CI: first text paragraph from fixture EPUB (chapter.xhtml), without foliate DOM.
 #[tauri::command]
 pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
