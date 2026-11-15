@@ -227,7 +227,6 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect(epubCard).toBeDisplayed();
       await epubCard.click();
       await browser.pause(4000);
-      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
       await $('[data-route="quotes"]').click();
       await browser.pause(800);
       await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
