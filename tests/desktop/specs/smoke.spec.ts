@@ -72,18 +72,26 @@ async function waitEpubTextReady(timeoutMs = 90_000) {
   await browser.waitUntil(
     async () => {
       if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
-      return browser.execute(() => {
-        const fv = document.querySelector("#epub-root foliate-view");
+      return browser.execute(function epubFoliateHasText() {
+        var fv = document.querySelector("#epub-root foliate-view");
         if (!fv) return false;
-        const hasText = (node: Node): boolean => {
-          if (node.nodeType === Node.TEXT_NODE && (node.textContent?.trim().length ?? 0) > 3) return true;
-          if (node instanceof Element && node.shadowRoot) {
-            for (const c of node.shadowRoot.childNodes) if (hasText(c)) return true;
+        var stack = [fv];
+        while (stack.length) {
+          var node = stack.pop() as Node;
+          if (node.nodeType === 3 && (node.textContent || "").trim().length > 3) return true;
+          if (node.nodeType === 1) {
+            var el = node as HTMLElement;
+            if (el.shadowRoot) {
+              for (var i = el.shadowRoot.childNodes.length - 1; i >= 0; i--) {
+                stack.push(el.shadowRoot.childNodes[i]);
+              }
+            }
           }
-          for (const c of node.childNodes) if (hasText(c)) return true;
-          return false;
-        };
-        return hasText(fv);
+          for (var j = node.childNodes.length - 1; j >= 0; j--) {
+            stack.push(node.childNodes[j]);
+          }
+        }
+        return false;
       });
     },
     { timeout: timeoutMs, interval: 500, timeoutMsg: "EPUB text not ready" },
