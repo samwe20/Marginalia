@@ -110,7 +110,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (!/žádná knihovna/i.test(libraryLabel)) {
         throw new Error(`expected empty library label, got: ${libraryLabel}`);
       }
-      await callSmokeApi("openBookAtPath", pdfPath, "");
+      try {
+        await callSmokeApi("openBookAtPath", pdfPath, "");
+      } catch (e) {
+        const status = await $("#status").getText();
+        throw new Error(`${e}; status=${status}`);
+      }
       await waitPdfTextReady();
       const pickersAfterOpen = await callSmokeApi<number>("getFolderPickerInvocationCount");
       if (pickersAfterOpen !== pickersBefore) {

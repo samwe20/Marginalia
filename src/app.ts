@@ -911,6 +911,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       setStatus(msg);
       toast(msg, "error");
       console.error(err);
+      throw err;
     }
   };
 
@@ -954,6 +955,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
+    if (!libraryRoot) await ensureLibraryRoot();
     if (isTauri()) {
       const parent = filePath.replace(/[/\\][^/\\]+$/, "");
       if (parent) {
@@ -1028,6 +1030,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     openBookAtPath: async (filePath: string, libraryRoot = "") => {
       await openBookFromAbsolutePath(libraryRoot, filePath);
+      if (state.route !== "reader" || !state.book) {
+        throw new Error(`openBookAtPath failed for ${filePath}`);
+      }
     },
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {

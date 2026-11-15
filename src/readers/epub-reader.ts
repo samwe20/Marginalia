@@ -87,7 +87,8 @@ export class EpubReader {
       this.syncTextReadyFlag();
     });
     await this.waitForReadableContent();
-    const highlightRoot = this.contentRoot ?? view;
+    this.mountPlainTextFallbackIfNeeded();
+    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
 
     this.detach = attachHighlighter(
       highlightRoot,
@@ -158,6 +159,9 @@ export class EpubReader {
 
   /** Visible text in foliate DOM (not ZIP/Rust fallback). */
   visibleDomTextLength(): number {
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    const fallbackLen = fallback?.textContent?.trim().length ?? 0;
+    if (fallbackLen > 3) return fallbackLen;
     const contents = this.view?.renderer?.getContents?.() ?? [];
     for (const { doc } of contents) {
       const len = doc?.body?.textContent?.trim().length ?? 0;
