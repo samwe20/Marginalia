@@ -105,23 +105,36 @@ pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let mut archive =
         zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
-    let mut chapter = archive.by_name("chapter.xhtml").map_err(|e| e.to_string())?;
-    let mut xml = String::new();
-    use std::io::Read;
-    chapter.read_to_string(&mut xml).map_err(|e| e.to_string())?;
     let re_body = regex::Regex::new(r"(?is)<body[^>]*>(.*?)</body>").map_err(|e| e.to_string())?;
-    let body = re_body
-        .captures(&xml)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str())
-        .unwrap_or(&xml);
     let re_tags = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
-    let text = re_tags.replace_all(body, " ").to_string();
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.len() < 3 {
+    use std::io::Read;
+    let mut best = String::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = entry.name().to_lowercase();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
+            continue;
+        }
+        if name.contains("nav") || name.contains("toc") {
+            continue;
+        }
+        let mut xml = String::new();
+        entry.read_to_string(&mut xml).map_err(|e| e.to_string())?;
+        let body = re_body
+            .captures(&xml)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or(&xml);
+        let text = re_tags.replace_all(body, " ").to_string();
+        let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if collapsed.len() > best.len() {
+            best = collapsed;
+        }
+    }
+    if best.len() < 3 {
         return Err("fixture epub has no readable text".into());
     }
-    Ok(collapsed)
+    Ok(best.chars().take(240).collect())
 }
 
 #[tauri::command]
