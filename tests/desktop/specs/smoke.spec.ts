@@ -110,7 +110,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (!/žádná knihovna/i.test(libraryLabel)) {
         throw new Error(`expected empty library label, got: ${libraryLabel}`);
       }
-      await smokeOpen(pdfPath, null);
+      await callSmokeApi("openBookAtPath", pdfPath, "");
       await waitPdfTextReady();
       const pickersAfterOpen = await callSmokeApi<number>("getFolderPickerInvocationCount");
       if (pickersAfterOpen !== pickersBefore) {
@@ -125,7 +125,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(600);
       const card = await $(".book-card:not(.book-card--demo)");
       await expect(card).toBeDisplayed();
-      await invoke("smoke_drop_book", { libraryRoot: null, filePath: epubPath });
+      await callSmokeApi("openBookAtPath", epubPath, "");
       await browser.pause(5000);
       await waitEpubTextReady(120_000);
       const pickersAfterDrop = await callSmokeApi<number>("getFolderPickerInvocationCount");

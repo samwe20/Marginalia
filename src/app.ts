@@ -973,6 +973,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   installSmokeTestApi({
     dropBookFromPath: async (libraryRoot, filePath) => {
+      if (!libraryRoot) {
+        await openBookFromAbsolutePath("", filePath);
+        return;
+      }
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("smoke_drop_book", { libraryRoot, filePath });
     },
@@ -1021,6 +1025,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       await openLibraryIndex(lib);
       setLibraryPath(lib, lib);
       return lib;
+    },
+    openBookAtPath: async (filePath: string, libraryRoot = "") => {
+      await openBookFromAbsolutePath(libraryRoot, filePath);
     },
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {

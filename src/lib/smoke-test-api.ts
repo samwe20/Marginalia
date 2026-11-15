@@ -15,6 +15,7 @@ export type SmokeTestApi = {
   getFolderPickerInvocationCount: () => number;
   resetFirstRunClientState: () => Promise<void>;
   adoptFixtureLibrary: () => Promise<string>;
+  openBookAtPath: (filePath: string, libraryRoot?: string) => Promise<void>;
 };
 
 declare global {
