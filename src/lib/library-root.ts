@@ -15,8 +15,8 @@ export async function ensureDefaultLibraryRoot(deps: LibraryRootUiDeps): Promise
     const { join, documentDir } = await import("@tauri-apps/api/path");
     const { exists, mkdir } = await import("@tauri-apps/plugin-fs");
     const root = await join(await documentDir(), "Marginalia");
-    if (!(await exists(root))) await mkdir(root, { recursive: true });
     await deps.setLibraryRoot(root);
+    if (!(await exists(root))) await mkdir(root, { recursive: true });
     await deps.openLibraryIndex(root);
     deps.setLibraryPath(root, root);
     deps.toast("Výchozí knihovna v Dokumentech (změníte v Nastavení)", "info");
