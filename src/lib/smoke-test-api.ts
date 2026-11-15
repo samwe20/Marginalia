@@ -6,6 +6,7 @@ export type SmokeTestApi = {
   dropBookFromPath: (libraryRoot: string, filePath: string) => Promise<void>;
   createPdfQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   createEpubQuoteFromSelection: () => Promise<SmokeQuoteResult>;
+  epubReaderReady: () => boolean;
   verifyDialogPlugin: () => Promise<{ ok: boolean; detail: string }>;
   seedWikilinkBacklink: () => Promise<{ targetTitle: string; backlinkCount: number }>;
   currentBookSlug: () => string | null;

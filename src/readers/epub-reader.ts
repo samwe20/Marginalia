@@ -138,7 +138,7 @@ export class EpubReader {
 
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
-    container.dataset.epubTextReady = this.docText.trim().length > 3 ? "1" : "0";
+    container.dataset.epubTextReady = this.firstSelectableText() ? "1" : "0";
   }
 
   private refreshDocText(): void {
@@ -152,17 +152,62 @@ export class EpubReader {
     anchor: ReturnType<typeof anchorFromEpubSelection>;
     range: Range;
   } | null {
-    if (!this.contentRoot || !this.view) return null;
-    const walker = document.createTreeWalker(this.contentRoot, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode() as Text | null;
-    while (node && !node.textContent?.trim()) node = walker.nextNode() as Text | null;
-    if (!node?.textContent?.trim()) return null;
+    if (!this.view) return null;
+    this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
+    this.refreshDocText();
+    const hit = this.firstSelectableText();
+    if (!hit) return null;
+    const { node, root } = hit;
     const range = document.createRange();
     range.selectNodeContents(node);
-    const { start, end, text } = rangeToOffsets(this.contentRoot, range);
+    const { start, end, text } = rangeToOffsets(root, range);
     const cfi = this.view.getCFI?.(range) ?? "/0/0";
     const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
     return { text, cfi, anchor, range };
+  }
+
+  private firstSelectableText(): { node: Text; root: HTMLElement } | null {
+    const candidates = [
+      this.resolveContentRoot(),
+      this.contentRoot,
+      this.view?.renderer?.root ?? null,
+      this.view,
+    ].filter((x): x is HTMLElement => x instanceof HTMLElement);
+    const seen = new Set<HTMLElement>();
+    for (const root of candidates) {
+      if (seen.has(root)) continue;
+      seen.add(root);
+      const hit = this.findTextInSubtree(root);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  private findTextInSubtree(root: Node): { node: Text; root: HTMLElement } | null {
+    if (root instanceof HTMLElement) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode() as Text | null;
+      while (node) {
+        if (node.textContent?.trim()) return { node, root };
+        node = walker.nextNode() as Text | null;
+      }
+      if (root.shadowRoot) {
+        for (const child of root.shadowRoot.childNodes) {
+          const nested = this.findTextInSubtree(child);
+          if (nested) return nested;
+        }
+      }
+      for (const child of root.children) {
+        const nested = this.findTextInSubtree(child);
+        if (nested) return nested;
+      }
+    } else if (root instanceof DocumentFragment) {
+      for (const child of root.childNodes) {
+        const nested = this.findTextInSubtree(child);
+        if (nested) return nested;
+      }
+    }
+    return null;
   }
 
   paintHighlight(range: Range): void {

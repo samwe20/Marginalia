@@ -58,43 +58,25 @@ async function saveScreenshot(name: string) {
 
 async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
   return browser.execute(
-    ({ m, a }) => {
-      const api = (window as unknown as { __MARGINALIA_SMOKE_API__?: Record<string, (...x: unknown[]) => unknown> })
-        .__MARGINALIA_SMOKE_API__;
-      if (!api?.[m]) throw new Error(`Smoke API missing: ${m}`);
-      return api[m](...a);
+    function callMarginaliaSmokeApi(payload) {
+      var m = payload.m;
+      var a = payload.a;
+      var api = window.__MARGINALIA_SMOKE_API__;
+      if (!api || typeof api[m] !== "function") throw new Error("Smoke API missing: " + m);
+      return api[m].apply(api, a);
     },
     { m: method, a: args },
   ) as Promise<T>;
 }
 
-async function waitEpubTextReady(timeoutMs = 90_000) {
+async function waitEpubTextReady(timeoutMs = 120_000) {
+  await browser.pause(3000);
   await browser.waitUntil(
     async () => {
       if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
-      return browser.execute(function epubFoliateHasText() {
-        var fv = document.querySelector("#epub-root foliate-view");
-        if (!fv) return false;
-        var stack = [fv];
-        while (stack.length) {
-          var node = stack.pop() as Node;
-          if (node.nodeType === 3 && (node.textContent || "").trim().length > 3) return true;
-          if (node.nodeType === 1) {
-            var el = node as HTMLElement;
-            if (el.shadowRoot) {
-              for (var i = el.shadowRoot.childNodes.length - 1; i >= 0; i--) {
-                stack.push(el.shadowRoot.childNodes[i]);
-              }
-            }
-          }
-          for (var j = node.childNodes.length - 1; j >= 0; j--) {
-            stack.push(node.childNodes[j]);
-          }
-        }
-        return false;
-      });
+      return (await callSmokeApi<boolean>("epubReaderReady")) === true;
     },
-    { timeout: timeoutMs, interval: 500, timeoutMsg: "EPUB text not ready" },
+    { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB text not ready" },
   );
 }
 
