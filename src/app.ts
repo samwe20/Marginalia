@@ -955,7 +955,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
-    epubReaderReady: () => !!epub?.quoteDraftFromFirstText(),
+    epubReaderReady: () => {
+      try {
+        return !!epub?.quoteDraftFromFirstText();
+      } catch {
+        return false;
+      }
+    },
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");

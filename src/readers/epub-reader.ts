@@ -99,8 +99,8 @@ export class EpubReader {
       let tries = 0;
       const tick = () => {
         const contents = this.view?.renderer?.getContents?.() ?? [];
-        const loaded = contents.find((c) => (c.doc.body?.textContent?.trim().length ?? 0) > 3);
-        if (loaded?.doc.body) {
+        const loaded = contents.find((c) => (c.doc?.body?.textContent?.trim().length ?? 0) > 3);
+        if (loaded?.doc?.body) {
           this.contentRoot = loaded.doc.body;
           this.refreshDocText();
           this.syncTextReadyFlag();
@@ -202,7 +202,7 @@ export class EpubReader {
   private firstSelectableText(): { node: Text; root: HTMLElement } | null {
     const contents = this.view?.renderer?.getContents?.() ?? [];
     for (const { doc } of contents) {
-      const body = doc.body;
+      const body = doc?.body;
       if (body) {
         const hit = this.findTextInSubtree(body);
         if (hit) return hit;
