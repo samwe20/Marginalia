@@ -44,7 +44,7 @@ import {
 } from "./lib/library-root-telemetry";
 import { createBlankNote, saveNote } from "./lib/notes";
 import type { initThemePreference } from "./ui/theme-preference";
-import { PdfReader } from "./readers/pdf-reader";
+import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import {
   DEMO_ENABLED_KEY,
@@ -61,7 +61,8 @@ import {
 } from "./lib/demo-data";
 import { listNotes } from "./lib/notes";
 import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
-import { escapeAttr, escapeHtml } from "./lib/html";
+import { escapeAttr, escapeHtml, formatDateCs } from "./lib/html";
+import type { QuoteDocument } from "./lib/quote-markdown";
 import { icons } from "./ui/icons";
 import {
   renderBookDetailPage,
@@ -128,6 +129,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   let pdf: PdfReader | null = null;
+  let pdfPageCounterDetach: (() => void) | null = null;
   let epub: EpubReader | null = null;
   const linkIndex = new NoteIndex();
   let activeNoteId: string | undefined;
@@ -296,16 +298,33 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   };
 
-  const renderInspectorQuotes = (quotes: { quoteText: string; page: string }[]) => {
-    if (!quotes.length) {
+  const formatQuotePageLabel = (page: string): string => {
+    const p = page.trim();
+    if (/^\d+$/.test(p)) return `str. ${p}`;
+    if (p.length > 28) return `${p.slice(0, 14)}…`;
+    return p || "—";
+  };
+
+  const renderInspectorQuotes = (docs: QuoteDocument[]) => {
+    if (!docs.length) {
       inspectorBody.innerHTML = `<p class="muted">Zatím žádné citace. Zapněte zvýrazňování a označte text v knize.</p>`;
       return;
     }
-    inspectorBody.innerHTML = `<ul class="quote-list">${quotes
-      .map(
-        (q) =>
-          `<li class="quote-card"><div class="quote-card__page">${escapeHtml(q.page)}</div><div class="quote-card__text">${escapeHtml(q.quoteText)}</div></li>`,
-      )
+    inspectorBody.innerHTML = `<ul class="quote-list">${docs
+      .map((d) => {
+        const author = d.meta.author.trim() || "Neznámý autor";
+        const book = d.meta.book_title.trim() || "—";
+        const when = formatDateCs(d.meta.created);
+        return `<li class="quote-card">
+          <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(d.meta.page))}</div>
+          <div class="quote-card__text">${escapeHtml(d.quoteText)}</div>
+          <div class="tag-row quote-card__meta" aria-label="Metadata citace">
+            <span class="tag-chip tag-chip--meta" title="Autor">${escapeHtml(author)}</span>
+            <span class="tag-chip tag-chip--meta" title="Dílo">${escapeHtml(book)}</span>
+            <span class="tag-chip tag-chip--meta" title="Vytvořeno">${escapeHtml(when)}</span>
+          </div>
+        </li>`;
+      })
       .join("")}</ul>`;
   };
 
@@ -823,13 +842,20 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const mountReaderChrome = (kind: BookFileKind, title: string) => {
     const foliate = kind !== "pdf";
     stageMain.innerHTML = `
-      <div class="reader-toolbar">
-        <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
-        <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
+      <div class="reader-layout">
+        <div class="reader-toolbar">
+          <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
+          <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
+        </div>
+        <div class="reader-surface">
+          <div id="${foliate ? "epub-root" : "pdf-root"}" class="${foliate ? "epub-root" : "pdf-root"}"></div>
+        </div>
+        <div class="reader-page-counter" id="reader-page-counter" ${foliate ? "hidden" : ""} aria-live="polite">—</div>
       </div>
-      <div class="reader-surface"><div id="${foliate ? "epub-root" : "pdf-root"}" class="${foliate ? "epub-root" : "pdf-root"}"></div></div>
     `;
     stageMain.querySelector("#btn-back-library")?.addEventListener("click", () => {
+      pdfPageCounterDetach?.();
+      pdfPageCounterDetach = null;
       pdf?.destroy();
       epub?.destroy();
       pdf = null;
@@ -895,14 +921,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         onHighlight: async ({ text, pageIndex, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
           const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          renderInspectorQuotes(docs);
           toast("Citace uložena", "success");
         },
       });
       await pdf.load(buffer);
+      const surface = stageMain.querySelector(".reader-surface") as HTMLElement;
+      const counter = stageMain.querySelector("#reader-page-counter") as HTMLElement;
+      pdfPageCounterDetach?.();
+      pdfPageCounterDetach = attachPdfPageCounter(surface, pdfRoot, counter, pdf.getPageCount());
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      renderInspectorQuotes(docs);
     } else if (fileKind === "epub" || fileKind === "mobi") {
       pushRecent({ ...state.book, slug: state.slug, kind: fileKind, updated: now });
       pdf?.destroy();
@@ -915,14 +945,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         onHighlight: async ({ text, cfi, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
           const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          renderInspectorQuotes(docs);
           toast("Citace uložena", "success");
         },
       });
       await epub.load(new File([buffer], fileName, { type: mimeForBookFileName(fileName) }));
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      renderInspectorQuotes(docs);
     } else {
       throw new Error("Nepodporovaný formát — použijte PDF, EPUB nebo MOBI/AZW.");
     }
@@ -1025,7 +1055,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       );
       pdf.paintHighlight(draft.layer, draft.range);
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      renderInspectorQuotes(docs);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
     epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
@@ -1097,7 +1127,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
       if (draft.range) epub.paintHighlight(draft.range);
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      renderInspectorQuotes(docs);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
     verifyDialogPlugin: smokeVerifyDialogPlugin,
