@@ -32,6 +32,7 @@ Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.epub") $libraryRoot
 $env:MARGINALIA_APP_EXE = $appExe.FullName
 $env:MARGINALIA_SMOKE_LIBRARY = $libraryRoot
 $env:MARGINALIA_SMOKE = "1"
+$env:MARGINALIA_SMOKE_DEFER_LIBRARY = "1"
 $env:MARGINALIA_FIXTURE_PDF = Join-Path $libraryRoot "sample.pdf"
 $env:MARGINALIA_FIXTURE_EPUB = Join-Path $libraryRoot "sample.epub"
 $resultsDir = Join-Path $repoRoot "test-results\desktop-smoke"

@@ -26,8 +26,8 @@ async function invoke(cmd: string, args: Record<string, unknown> = {}) {
   );
 }
 
-async function smokeOpen(filePath: string) {
-  await invoke("smoke_open_book", { libraryRoot: library, filePath });
+async function smokeOpen(filePath: string, libraryRoot: string | null = library) {
+  await invoke("smoke_open_book", { libraryRoot, filePath });
 }
 
 async function waitPdfTextReady(timeoutMs = 45_000) {
@@ -70,19 +70,14 @@ async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
 }
 
 async function waitEpubTextReady(timeoutMs = 120_000) {
-  await browser.pause(3000);
+  await browser.pause(2000);
   await browser.waitUntil(
     async () => {
-      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
-      if ((await callSmokeApi<boolean>("epubReaderReady")) === true) return true;
-      try {
-        const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
-        return typeof text === "string" && text.trim().length > 3;
-      } catch {
-        return false;
-      }
+      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) !== "1") return false;
+      const visible = (await callSmokeApi<number>("epubVisibleTextLength")) ?? 0;
+      return visible > 3;
     },
-    { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB text not ready" },
+    { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB visible text not rendered" },
   );
 }
 
@@ -101,6 +96,58 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S01", "Library shell", true);
     } catch (e) {
       record("S01", "Library shell", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S18 first-run: open book without folder dialog, default library, persist", async () => {
+    try {
+      await invoke("smoke_reset_first_run");
+      await callSmokeApi("resetFirstRunClientState");
+      await browser.pause(600);
+      const pickersBefore = await callSmokeApi<number>("getFolderPickerInvocationCount");
+      const libraryLabel = await $("#library-path").getText();
+      if (!/žádná knihovna/i.test(libraryLabel)) {
+        throw new Error(`expected empty library label, got: ${libraryLabel}`);
+      }
+      await smokeOpen(pdfPath, null);
+      await waitPdfTextReady();
+      const pickersAfterOpen = await callSmokeApi<number>("getFolderPickerInvocationCount");
+      if (pickersAfterOpen !== pickersBefore) {
+        throw new Error(`folder picker opened during first-run (${pickersBefore} → ${pickersAfterOpen})`);
+      }
+      const root = await callSmokeApi<string>("getLibraryRoot");
+      const expected = (await invoke("smoke_expected_documents_library")) as string;
+      if (root.replace(/\\/g, "/").toLowerCase() !== expected.replace(/\\/g, "/").toLowerCase()) {
+        throw new Error(`library root mismatch: ${root} vs ${expected}`);
+      }
+      await $("#btn-back-library").click();
+      await browser.pause(600);
+      const card = await $(".book-card:not(.book-card--demo)");
+      await expect(card).toBeDisplayed();
+      await invoke("smoke_drop_book", { libraryRoot: null, filePath: epubPath });
+      await browser.pause(5000);
+      await waitEpubTextReady(120_000);
+      const pickersAfterDrop = await callSmokeApi<number>("getFolderPickerInvocationCount");
+      if (pickersAfterDrop !== pickersBefore) {
+        throw new Error(`folder picker during first-run D&D (${pickersBefore} → ${pickersAfterDrop})`);
+      }
+      await $("#btn-back-library").click();
+      await browser.pause(600);
+      await browser.reloadSession();
+      await browser.pause(4500);
+      const rootAfter = await callSmokeApi<string>("getLibraryRoot");
+      if (!rootAfter) throw new Error("library root missing after restart");
+      await $('[data-route="library"]').click();
+      await browser.pause(800);
+      const cards = await $$(".book-card:not(.book-card--demo)");
+      if ((await cards.length) < 1) throw new Error("no library cards after first-run restart");
+      const adopted = await callSmokeApi<string>("adoptFixtureLibrary");
+      if (adopted !== library) throw new Error(`fixture library adopt failed: ${adopted} vs ${library}`);
+      await saveScreenshot("smoke-first-run.png");
+      record("S18", "First-run open + D&D + default library + restart", true, root);
+    } catch (e) {
+      record("S18", "First-run open + D&D + default library + restart", false, String(e));
       throw e;
     }
   });

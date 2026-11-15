@@ -10,7 +10,7 @@
 
 - Job **`windows-develop-release`** publikuje `develop-latest` **jen pokud** smoke projde (`needs: [windows-build, windows-installed-smoke]`).
 
-- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S01–S17).
+- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S01–S18).
 
 ## Příkazy lokálně (Windows)
 
@@ -42,6 +42,7 @@ Výstupy: `test-results/desktop-smoke/` (screenshoty, `smoke-results.json`).
 | S15 | **EPUB citace** | stejné pro EPUB + `mark.quote-highlight` |
 | S16 | **wikilink + backlink** | `seedWikilinkBacklink` → `#panel-backlinks-list` |
 | S17 | **nativní Open dialog** | `smoke_dialog_capable` + načtení `dialog` pluginu (bez automatizace okna) |
+| S18 | **first-run bez knihovny** | `smoke_reset_first_run` + otevření knihy/D&D bez `pickLibrary`, `Documents/Marginalia`, restart |
 
 ## Nepoužívat web build jako důkaz desktopu
 

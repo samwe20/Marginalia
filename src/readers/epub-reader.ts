@@ -66,13 +66,17 @@ export class EpubReader {
     this.view = view;
 
     await view.open(book);
-    if (view.init) await view.init({ showTextStart: true });
-    else if (view.goToTextStart) await view.goToTextStart();
-    else await view.goTo(0);
+    const startIndex = await this.findBestReadableSectionIndex(
+      book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
+    );
+    if (view.init) await view.init({ showTextStart: false });
+    const renderer = view.renderer as { goTo?: (target: { index: number }) => Promise<void> };
+    if (renderer?.goTo) await renderer.goTo({ index: startIndex });
+    else await view.goTo(startIndex);
     const paginator = view.renderer as { firstSection?: () => Promise<void>; goTo?: (target: unknown) => Promise<void> };
     if (!(view.renderer?.getContents?.() ?? []).length) {
       if (paginator?.firstSection) await paginator.firstSection();
-      else if (paginator?.goTo) await paginator.goTo({ index: 0 });
+      else if (paginator?.goTo) await paginator.goTo({ index: startIndex });
     }
     view.renderer?.addEventListener?.("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
@@ -114,23 +118,9 @@ export class EpubReader {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
-        if (this.fixturePlainText && this.fixturePlainText.length > 3) {
-          this.syncTextReadyFlag();
-          resolve();
-          return;
-        }
-        const contents = this.view?.renderer?.getContents?.() ?? [];
-        const loaded = contents.find((c) => (c.doc?.body?.textContent?.trim().length ?? 0) > 3);
-        if (loaded?.doc?.body) {
-          this.contentRoot = loaded.doc.body;
+        if (this.visibleDomTextLength() > 3) {
+          this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
           this.refreshDocText();
-          this.syncTextReadyFlag();
-          resolve();
-          return;
-        }
-        this.contentRoot = this.resolveContentRoot();
-        this.refreshDocText();
-        if (this.contentRoot && this.docText.trim().length > 3) {
           this.syncTextReadyFlag();
           resolve();
           return;
@@ -145,6 +135,42 @@ export class EpubReader {
       };
       tick();
     });
+  }
+
+  /** Visible text in foliate DOM (not ZIP/Rust fallback). */
+  visibleDomTextLength(): number {
+    const contents = this.view?.renderer?.getContents?.() ?? [];
+    for (const { doc } of contents) {
+      const len = doc?.body?.textContent?.trim().length ?? 0;
+      if (len > 3) return len;
+    }
+    const root = this.resolveContentRoot();
+    return root?.textContent?.trim().length ?? 0;
+  }
+
+  private async findBestReadableSectionIndex(book: {
+    sections?: { linear?: string; createDocument?: () => Promise<Document> }[];
+  }): Promise<number> {
+    const sections = book.sections ?? [];
+    let bestIdx = sections.findIndex((s) => s.linear !== "no");
+    if (bestIdx < 0) bestIdx = 0;
+    let bestLen = 0;
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i];
+      if (section?.linear === "no") continue;
+      try {
+        if (!section?.createDocument) continue;
+        const doc = await section.createDocument();
+        const len = doc.body?.textContent?.replace(/\s+/g, " ").trim().length ?? 0;
+        if (len > bestLen) {
+          bestLen = len;
+          bestIdx = i;
+        }
+      } catch {
+        /* skip broken section */
+      }
+    }
+    return bestIdx;
   }
 
   private beginTextReadyWatch(): void {
@@ -192,8 +218,7 @@ export class EpubReader {
 
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
-    container.dataset.epubTextReady =
-      this.firstSelectableText() || this.fixturePlainText ? "1" : "0";
+    container.dataset.epubTextReady = this.visibleDomTextLength() > 3 ? "1" : "0";
   }
 
   private refreshDocText(): void {
@@ -224,12 +249,19 @@ export class EpubReader {
     sections?: { linear?: string; createDocument?: () => Promise<Document> }[];
   }): Promise<void> {
     try {
-      const section =
-        book.sections?.find((s) => s.linear !== "no") ?? book.sections?.[0];
-      if (!section?.createDocument) return;
-      const doc = await section.createDocument();
-      const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-      if (plain.length > 3) this.fixturePlainText = plain;
+      const sections = book.sections ?? [];
+      let best = "";
+      for (const section of sections) {
+        if (section.linear === "no" || !section.createDocument) continue;
+        try {
+          const doc = await section.createDocument();
+          const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+          if (plain.length > best.length) best = plain;
+        } catch {
+          /* try next */
+        }
+      }
+      if (best.length > 3) this.fixturePlainText = best;
     } catch {
       this.fixturePlainText = null;
     }

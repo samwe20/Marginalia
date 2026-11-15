@@ -52,6 +52,10 @@ pub fn run() {
             smoke::smoke_dialog_capable,
             smoke::smoke_list_quote_files,
             smoke::smoke_epub_fixture_paragraph,
+            smoke::smoke_defer_fixture_library,
+            smoke::smoke_reset_first_run,
+            smoke::smoke_expected_documents_library,
+            smoke::smoke_adopt_fixture_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Marginalia");

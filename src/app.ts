@@ -29,6 +29,12 @@ import {
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import { installSmokeTestApi } from "./lib/smoke-test-api";
 import { smokeVerifyDialogPlugin } from "./lib/open-book";
+import { ensureDefaultLibraryRoot } from "./lib/library-root";
+import {
+  getFolderPickerInvocationCount,
+  recordFolderPickerInvocation,
+  resetFolderPickerInvocationCount,
+} from "./lib/library-root-telemetry";
 import { createBlankNote, saveNote } from "./lib/notes";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader } from "./readers/pdf-reader";
@@ -48,7 +54,6 @@ import {
 } from "./lib/demo-data";
 import { listNotes } from "./lib/notes";
 import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
-import { anchorFromEpubSelection } from "./lib/anchor";
 import { escapeAttr, escapeHtml } from "./lib/html";
 import { icons } from "./ui/icons";
 import {
@@ -128,6 +133,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       setRoute("notes");
     },
     createNoteWithTitle: async (title: string) => {
+      await ensureLibraryRoot();
       await createNoteFromTitle(state.libraryRoot, title, linkIndex, {
         openNoteEditor: (id) => {
           activeNoteId = id;
@@ -316,13 +322,20 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (route === "library") void renderLibrary();
     if (route === "quotes") void renderQuotesOverview();
     if (route === "notes") {
-      void renderNotesView(stageMain, {
-        libraryRoot: state.libraryRoot,
-        index: linkIndex,
-        theme: themeCtrl.getEffective(),
-        wiki: wikiHandlers,
-        onReindex: reindexLinks,
-      }, activeNoteId);
+      void (async () => {
+        await ensureLibraryRoot();
+        void renderNotesView(
+          stageMain,
+          {
+            libraryRoot: state.libraryRoot,
+            index: linkIndex,
+            theme: themeCtrl.getEffective(),
+            wiki: wikiHandlers,
+            onReindex: reindexLinks,
+          },
+          activeNoteId,
+        );
+      })();
     }
     if (route === "search") renderSearch();
     if (route === "settings") renderSettings();
@@ -745,29 +758,23 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   };
 
-  /** Bez nastavené knihovny nevoláme výběr složky uprostřed „Otevřít knihu“ — jen výchozí cestu. */
   const ensureLibraryRoot = async (): Promise<boolean> => {
     if (state.libraryRoot) return true;
-    if (isTauri()) {
-      const { join, documentDir } = await import("@tauri-apps/api/path");
-      const { exists, mkdir } = await import("@tauri-apps/plugin-fs");
-      const root = await join(await documentDir(), "Marginalia");
-      if (!(await exists(root))) await mkdir(root, { recursive: true });
-      await setLibraryRoot(root);
-      await openLibraryIndex(root);
-      setLibraryPath(root, root);
-      toast("Výchozí knihovna v Dokumentech (změníte v Nastavení)", "info");
-      if (state.route === "settings") renderSettings();
-      return true;
-    }
-    state.libraryRoot = "/Marginalia";
-    localStorage.setItem("marginalia.libraryRoot", state.libraryRoot);
-    setLibraryPath("Web režim (localStorage)");
+    const root = await ensureDefaultLibraryRoot({
+      setLibraryRoot,
+      openLibraryIndex,
+      setLibraryPath,
+      toast,
+      renderSettings,
+      route: state.route,
+    });
+    state.libraryRoot = root;
     return true;
   };
 
   const pickLibrary = async () => {
     if (isTauri()) {
+      recordFolderPickerInvocation();
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
         directory: true,
@@ -947,7 +954,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
-    await setLibraryRoot(libraryRoot);
+    if (libraryRoot) await setLibraryRoot(libraryRoot);
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const bytes = await readFile(filePath);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -981,35 +988,44 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
-    epubReaderReady: () => {
-      try {
-        return !!epub?.quoteDraftFromFirstText() || !!epub?.getFixturePlainText();
-      } catch {
-        return false;
-      }
+    epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
+    epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
+    getLibraryRoot: () => state.libraryRoot,
+    getFolderPickerInvocationCount,
+    resetFirstRunClientState: async () => {
+      state.libraryRoot = "";
+      state.book = null;
+      state.slug = "";
+      recentBooksCache = [];
+      localStorage.removeItem("marginalia.libraryRoot");
+      localStorage.removeItem("marginalia.recentBooks");
+      resetFolderPickerInvocationCount();
+      setLibraryPath("Žádná knihovna");
+      pdf?.destroy();
+      epub?.destroy();
+      pdf = null;
+      epub = null;
+      if (state.route === "library") await renderLibrary();
+    },
+    adoptFixtureLibrary: async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const lib = (await invoke("smoke_adopt_fixture_library")) as string;
+      await setLibraryRoot(lib);
+      await openLibraryIndex(lib);
+      setLibraryPath(lib, lib);
+      return lib;
     },
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");
       }
       let liveDraft = epub.quoteDraftFromFirstText();
-      for (let i = 0; !liveDraft && i < 24; i++) {
+      for (let i = 0; !liveDraft && i < 40; i++) {
         await new Promise((r) => setTimeout(r, 500));
         liveDraft = epub.quoteDraftFromFirstText();
       }
-      let draft = liveDraft ?? epub.quoteDraftFromFixtureText();
-      if (!draft) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
-        if (smokeOn) {
-          const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
-          const snippet = text.slice(0, Math.min(text.length, 120));
-          const cfi = "/0/0";
-          const anchor = anchorFromEpubSelection(text, 0, snippet.length, cfi);
-          draft = { text: snippet, cfi, anchor, range: null };
-        }
-      }
-      if (!draft) throw new Error("No selectable EPUB text");
+      const draft = liveDraft ?? epub.quoteDraftFromFixtureText();
+      if (!draft) throw new Error("No selectable EPUB text (DOM not ready)");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
       if (draft.range) epub.paintHighlight(draft.range);
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
@@ -1018,6 +1034,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     verifyDialogPlugin: smokeVerifyDialogPlugin,
     seedWikilinkBacklink: async () => {
+      await ensureLibraryRoot();
       if (!state.libraryRoot) throw new Error("No library root");
       const targetTitle = "Smoke cíl";
       const target = createBlankNote(targetTitle);
@@ -1094,7 +1111,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     libraryRoot = (await loadDesktopLibraryRoot()) || libraryRoot;
     const { invoke } = await import("@tauri-apps/api/core");
     const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
-    if (!libraryRoot && smokeOn) {
+    const deferFixture = smokeOn && (await invoke("smoke_defer_fixture_library")) === true;
+    if (!libraryRoot && smokeOn && !deferFixture) {
       const fixtures = (await invoke("smoke_fixture_paths")) as { library_root: string | null };
       if (fixtures.library_root) libraryRoot = fixtures.library_root;
     }
