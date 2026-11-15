@@ -190,8 +190,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S07 open EPUB", async () => {
     try {
       await smokeOpen(epubPath);
-      await browser.pause(4500);
       await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await waitEpubTextReady(120_000);
       record("S07", "Open EPUB", true);
     } catch (e) {
       record("S07", "Open EPUB", false, String(e));
@@ -201,7 +201,6 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
     try {
-      await waitEpubTextReady(90_000);
       const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
         "createEpubQuoteFromSelection",
       );
