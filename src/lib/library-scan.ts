@@ -1,3 +1,4 @@
+import { bookScanNamePattern } from "./book-formats";
 import { isTauri } from "./runtime";
 
 /** App metadata dirs — not scanned for source book files. */
@@ -13,7 +14,7 @@ function joinPath(dir: string, name: string): string {
   return `${base}${sep}${name}`;
 }
 
-/** Recursively find PDF/EPUB under the library root (user book files). */
+/** Recursively find PDF, EPUB, MOBI/AZW under the library root (user book files). */
 export async function findBookFilesOnDisk(libraryRoot: string): Promise<string[]> {
   if (!libraryRoot || !isTauri()) return [];
   const { readDir } = await import("@tauri-apps/plugin-fs");
@@ -34,7 +35,7 @@ export async function findBookFilesOnDisk(libraryRoot: string): Promise<string[]
       if (!name) continue;
       const full = joinPath(dir, name);
       if (e.isDirectory) await walk(full, depth + 1);
-      else if (e.isFile && /\.(pdf|epub)$/i.test(name)) found.push(full);
+      else if (e.isFile && bookScanNamePattern().test(name)) found.push(full);
     }
   };
 

@@ -29,6 +29,7 @@ import {
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import { installSmokeTestApi } from "./lib/smoke-test-api";
 import { smokeVerifyDialogPlugin } from "./lib/open-book";
+import { type BookFileKind, detectBookFileKind, mimeForBookFileName } from "./lib/book-formats";
 import { createDocumentsMarginaliaFolder, ensureLibrarySubdirs } from "./lib/library-root";
 import { syncAllBooksFromLibraryFolder } from "./lib/library-import";
 import {
@@ -218,7 +219,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const fileInput = document.createElement("input");
   fileInput.type = "file";
-  fileInput.accept = ".pdf,.epub";
+  fileInput.accept = ".pdf,.epub,.mobi,.azw,.azw3";
   fileInput.id = "file-open";
   fileInput.className = "hidden-input";
   fileInput.setAttribute("data-testid", "file-open");
@@ -408,7 +409,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
-        <p class="page-intro">PDF a EPUB ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
+        <p class="page-intro">PDF, EPUB a MOBI/AZW ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
         <div class="page-actions">
           <button type="button" class="primary-btn" id="btn-rescan-books" data-testid="btn-rescan-books">Obnovit knihy ze složky</button>
           <button type="button" class="ghost-btn solid" id="btn-library-folder">Změnit složku knihovny…</button>
@@ -441,7 +442,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 .join("")}</div></section>`
             : demoBooks.length
               ? ""
-              : `<p class="muted">Ve složce knihovny zatím nejsou PDF ani EPUB — přidejte soubory do složky a zvolte Obnovit knihy.</p>`
+              : `<p class="muted">Ve složce knihovny zatím nejsou podporované knihy — přidejte PDF, EPUB nebo MOBI a zvolte Obnovit knihy.</p>`
         }
       </div>
     `;
@@ -453,7 +454,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         const el = card as HTMLElement;
         void reopenRecentBook({
           slug: el.dataset.slug!,
-          kind: el.dataset.kind as "pdf" | "epub",
+          kind: el.dataset.kind as BookFileKind,
           title: el.dataset.title ?? "",
           author: el.dataset.author ?? "",
           sha256: el.dataset.sha256 ?? "",
@@ -756,7 +757,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const rescanBooksFromFolder = async () => {
     if (!(await requireLibraryConfigured())) return;
     const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
-    toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové PDF/EPUB", n ? "success" : "info");
+    toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové knihy (PDF/EPUB/MOBI)", n ? "success" : "info");
     if (state.route === "library") await renderLibrary();
   };
 
@@ -819,13 +820,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   };
 
-  const mountReaderChrome = (kind: "pdf" | "epub", title: string) => {
+  const mountReaderChrome = (kind: BookFileKind, title: string) => {
+    const foliate = kind !== "pdf";
     stageMain.innerHTML = `
       <div class="reader-toolbar">
         <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
         <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
       </div>
-      <div class="reader-surface"><div id="${kind === "pdf" ? "pdf-root" : "epub-root"}" class="${kind === "pdf" ? "pdf-root" : "epub-root"}"></div></div>
+      <div class="reader-surface"><div id="${foliate ? "epub-root" : "pdf-root"}" class="${foliate ? "epub-root" : "pdf-root"}"></div></div>
     `;
     stageMain.querySelector("#btn-back-library")?.addEventListener("click", () => {
       pdf?.destroy();
@@ -859,7 +861,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     opts: { slug?: string; storedPath?: string; skipPersist?: boolean } = {},
   ) => {
     const sha = await sha256Hex(buffer);
-    const lower = fileName.toLowerCase();
+    const fileKind = detectBookFileKind(fileName);
     try {
     state.book = {
       title: fileName.replace(/\.[^.]+$/, ""),
@@ -881,7 +883,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     await ensureBookCard(state.libraryRoot, state.book);
     const now = new Date().toISOString();
 
-    if (lower.endsWith(".pdf")) {
+    if (fileKind === "pdf") {
       pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
       epub?.destroy();
       epub = null;
@@ -901,11 +903,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-    } else if (lower.endsWith(".epub")) {
-      pushRecent({ ...state.book, slug: state.slug, kind: "epub", updated: now });
+    } else if (fileKind === "epub" || fileKind === "mobi") {
+      pushRecent({ ...state.book, slug: state.slug, kind: fileKind, updated: now });
       pdf?.destroy();
       pdf = null;
-      mountReaderChrome("epub", state.book.title);
+      mountReaderChrome(fileKind, state.book.title);
       const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
       epub = new EpubReader({
         container: epubRoot,
@@ -917,12 +919,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           toast("Citace uložena", "success");
         },
       });
-      await epub.load(new File([buffer], fileName, { type: "application/epub+zip" }));
+      await epub.load(new File([buffer], fileName, { type: mimeForBookFileName(fileName) }));
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
       renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
     } else {
-      throw new Error("Nepodporovaný formát — použijte PDF nebo EPUB.");
+      throw new Error("Nepodporovaný formát — použijte PDF, EPUB nebo MOBI/AZW.");
     }
 
     state.route = "reader";
@@ -964,7 +966,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pushRecent({ ...entry, filePath: storedPath });
       buffer = newBuf;
     }
-    const fileName = storedPath.replace(/^.*[/\\]/, "") || `${entry.slug}.${entry.kind === "pdf" ? "pdf" : "epub"}`;
+    const fileName =
+      storedPath.replace(/^.*[/\\]/, "") ||
+      `${entry.slug}.${entry.kind === "pdf" ? "pdf" : entry.kind === "mobi" ? "mobi" : "epub"}`;
     await openBookFromBuffer(buffer, fileName, {
       slug: entry.slug,
       storedPath,

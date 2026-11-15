@@ -33,7 +33,7 @@ export function showLibrarySetupModal(actions: LibrarySetupModalActions): void {
       <div class="setup-modal__panel">
         <h2 id="setup-modal-title">Nastavení knihovny</h2>
         <p class="setup-modal__lead">
-          Není nastavena složka pro <strong>knihy</strong> (PDF, EPUB) a pro ukládání <strong>citací a poznámek</strong>.
+          Není nastavena složka pro <strong>knihy</strong> (PDF, EPUB, MOBI) a pro ukládání <strong>citací a poznámek</strong>.
         </p>
         <p class="muted setup-modal__hint">
           Po výběru složky aplikace automaticky načte všechny knihy, které v ní najde. Teprve potom můžete číst a zvýrazňovat.

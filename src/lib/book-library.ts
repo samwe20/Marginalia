@@ -1,3 +1,4 @@
+import { detectBookFileKind } from "./book-formats";
 import { bookCardPath, bookSlug } from "./paths";
 import type { BookMeta } from "./storage";
 import { isTauri } from "./runtime";
@@ -12,7 +13,7 @@ export interface ParsedBookCard {
 
 export interface LibraryBookEntry {
   slug: string;
-  kind: "pdf" | "epub";
+  kind: "pdf" | "epub" | "mobi";
   title: string;
   author: string;
   sha256: string;
@@ -52,7 +53,7 @@ export async function listLibraryBooksFromDisk(libraryRoot: string): Promise<Lib
       const text = await readTextFile(`${dir}/${e.name}`);
       const card = parseBookCardYaml(text);
       if (!card?.path) continue;
-      const kind: "pdf" | "epub" = card.path.toLowerCase().endsWith(".epub") ? "epub" : "pdf";
+      const kind: "pdf" | "epub" | "mobi" = detectBookFileKind(card.path) ?? "pdf";
       books.push({
         slug,
         kind,
@@ -71,8 +72,11 @@ export async function listLibraryBooksFromDisk(libraryRoot: string): Promise<Lib
 }
 
 function bookExt(name: string): string {
-  const m = name.toLowerCase().match(/\.(pdf|epub)$/);
-  return m ? `.${m[1]}` : ".pdf";
+  const lower = name.toLowerCase();
+  const m = lower.match(/\.(pdf|epub|mobi|azw3?)$/);
+  if (!m) return ".pdf";
+  if (m[1]!.startsWith("azw")) return `.${m[1]}`;
+  return `.${m[1]}`;
 }
 
 function binaryStorageKey(slug: string, ext: string): string {

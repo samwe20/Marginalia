@@ -1,3 +1,4 @@
+import { detectBookFileKind } from "./book-formats";
 import { bookSlug } from "./paths";
 import { findBookFilesOnDisk, isPathInsideLibrary } from "./library-scan";
 import { ensureBookCard, type BookMeta } from "./storage";
@@ -11,8 +12,8 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function bookKind(fileName: string): "pdf" | "epub" {
-  return fileName.toLowerCase().endsWith(".epub") ? "epub" : "pdf";
+function bookKind(fileName: string): "pdf" | "epub" | "mobi" {
+  return detectBookFileKind(fileName) ?? "pdf";
 }
 
 /** Register one on-disk book (no reader open). Copies into knihy/ only when file lies outside library root. */
