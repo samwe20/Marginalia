@@ -184,12 +184,25 @@ export class EpubReader {
   }
 
   private findTextInSubtree(root: Node): { node: Text; root: HTMLElement } | null {
+    if (root instanceof HTMLIFrameElement) {
+      try {
+        const doc = root.contentDocument;
+        if (doc?.body) return this.findTextInSubtree(doc.body);
+      } catch {
+        /* cross-origin */
+      }
+      return null;
+    }
     if (root instanceof HTMLElement) {
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode() as Text | null;
       while (node) {
         if (node.textContent?.trim()) return { node, root };
         node = walker.nextNode() as Text | null;
+      }
+      for (const iframe of root.querySelectorAll("iframe")) {
+        const nested = this.findTextInSubtree(iframe);
+        if (nested) return nested;
       }
       if (root.shadowRoot) {
         for (const child of root.shadowRoot.childNodes) {

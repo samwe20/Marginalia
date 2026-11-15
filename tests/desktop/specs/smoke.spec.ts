@@ -199,6 +199,37 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
+  it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
+    try {
+      await waitEpubTextReady(90_000);
+      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
+        "createEpubQuoteFromSelection",
+      );
+      const files = (await invoke("smoke_list_quote_files", {
+        libraryRoot: library,
+        bookSlug: created.slug,
+      })) as string[];
+      if (!files.includes(`${created.quoteId}.md`)) {
+        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
+      }
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      await $('[data-route="quotes"]').click();
+      await browser.pause(1200);
+      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
+      await $('[data-route="library"]').click();
+      await browser.pause(600);
+      const epubCard = await $('.book-card[data-kind="epub"]:not(.book-card--demo)');
+      await expect(epubCard).toBeDisplayed();
+      await epubCard.click();
+      await waitEpubTextReady(90_000);
+      await expect($("#epub-root mark.quote-highlight")).toBeExisting();
+      record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
+    } catch (e) {
+      record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
+      throw e;
+    }
+  });
+
   it("S08 open-book button visible", async () => {
     try {
       await $('[data-route="library"]').click();
@@ -354,36 +385,6 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S14", "PDF quote on disk + Citace + restore", true, created.quoteId);
     } catch (e) {
       record("S14", "PDF quote on disk + Citace + restore", false, String(e));
-      throw e;
-    }
-  });
-
-  it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
-    try {
-      await smokeOpen(epubPath);
-      await waitEpubTextReady();
-      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
-        "createEpubQuoteFromSelection",
-      );
-      const files = (await invoke("smoke_list_quote_files", {
-        libraryRoot: library,
-        bookSlug: created.slug,
-      })) as string[];
-      if (!files.includes(`${created.quoteId}.md`)) {
-        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
-      }
-      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      await $('[data-route="quotes"]').click();
-      await browser.pause(1200);
-      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
-      await $('[data-route="library"]').click();
-      await browser.pause(400);
-      await smokeOpen(epubPath);
-      await waitEpubTextReady();
-      await expect($("#epub-root mark.quote-highlight")).toBeExisting();
-      record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
-    } catch (e) {
-      record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
       throw e;
     }
   });
