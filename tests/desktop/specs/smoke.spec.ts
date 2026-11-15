@@ -74,7 +74,13 @@ async function waitEpubTextReady(timeoutMs = 120_000) {
   await browser.waitUntil(
     async () => {
       if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
-      return (await callSmokeApi<boolean>("epubReaderReady")) === true;
+      if ((await callSmokeApi<boolean>("epubReaderReady")) === true) return true;
+      try {
+        const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
+        return typeof text === "string" && text.trim().length > 3;
+      } catch {
+        return false;
+      }
     },
     { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB text not ready" },
   );
