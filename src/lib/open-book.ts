@@ -1,5 +1,35 @@
 import { isTauri } from "./runtime";
 
+let dialogOpenReachable = false;
+
+/** Set when smoke/code path reaches `dialog.open` import (native picker not shown). */
+export function markDialogOpenReachable(): void {
+  dialogOpenReachable = true;
+}
+
+export function wasDialogOpenReachable(): boolean {
+  return dialogOpenReachable;
+}
+
+export async function smokeVerifyDialogPlugin(): Promise<{ ok: boolean; detail: string }> {
+  if (!isTauri()) return { ok: false, detail: "not tauri" };
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
+    if (!smokeOn) return { ok: false, detail: "smoke disabled" };
+    const capable = (await invoke("smoke_dialog_capable")) as boolean;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    if (typeof open !== "function") return { ok: false, detail: "dialog.open missing" };
+    markDialogOpenReachable();
+    return {
+      ok: capable,
+      detail: capable ? "dialog:allow-open + plugin load OK" : "capability missing",
+    };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 const BOOK_FILTERS = [{ name: "Knihy", extensions: ["pdf", "epub"] as string[] }];
 
 function mimeForName(name: string): string {
@@ -13,6 +43,7 @@ function mimeForName(name: string): string {
 export async function pickBookFileViaDialog(): Promise<File | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
+  markDialogOpenReachable();
   const selected = await open({
     multiple: false,
     directory: false,

@@ -56,6 +56,36 @@ async function saveScreenshot(name: string) {
   await browser.saveScreenshot(target);
 }
 
+async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
+  return browser.execute(
+    function callMarginaliaSmokeApi(payload) {
+      var m = payload.m;
+      var a = payload.a;
+      var api = window.__MARGINALIA_SMOKE_API__;
+      if (!api || typeof api[m] !== "function") throw new Error("Smoke API missing: " + m);
+      return api[m].apply(api, a);
+    },
+    { m: method, a: args },
+  ) as Promise<T>;
+}
+
+async function waitEpubTextReady(timeoutMs = 120_000) {
+  await browser.pause(3000);
+  await browser.waitUntil(
+    async () => {
+      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) === "1") return true;
+      if ((await callSmokeApi<boolean>("epubReaderReady")) === true) return true;
+      try {
+        const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
+        return typeof text === "string" && text.trim().length > 3;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB text not ready" },
+  );
+}
+
 describe("Marginalia installed-app smoke (mandatory suite)", () => {
   after(() => {
     fs.mkdirSync(artifactDir, { recursive: true });
@@ -166,11 +196,43 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S07 open EPUB", async () => {
     try {
       await smokeOpen(epubPath);
-      await browser.pause(4500);
       await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await waitEpubTextReady(120_000);
       record("S07", "Open EPUB", true);
     } catch (e) {
       record("S07", "Open EPUB", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
+    try {
+      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
+        "createEpubQuoteFromSelection",
+      );
+      const files = (await invoke("smoke_list_quote_files", {
+        libraryRoot: library,
+        bookSlug: created.slug,
+      })) as string[];
+      if (!files.includes(`${created.quoteId}.md`)) {
+        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
+      }
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      await $('[data-route="quotes"]').click();
+      await browser.pause(1200);
+      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
+      await $('[data-route="library"]').click();
+      await browser.pause(600);
+      const epubCard = await $('.book-card[data-kind="epub"]:not(.book-card--demo)');
+      await expect(epubCard).toBeDisplayed();
+      await epubCard.click();
+      await browser.pause(4000);
+      await $('[data-route="quotes"]').click();
+      await browser.pause(800);
+      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
+      record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
+    } catch (e) {
+      record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
       throw e;
     }
   });
@@ -264,6 +326,108 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S12", "Restart app → library persists", true);
     } catch (e) {
       record("S12", "Restart app → library persists", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S13 drag-drop add → close/reopen → restart (bug #4)", async () => {
+    try {
+      await invoke("smoke_drop_book", { libraryRoot: library, filePath: epubPath });
+      await browser.pause(4500);
+      await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      const card = await $(".book-card:not(.book-card--demo)");
+      await expect(card).toBeDisplayed();
+      await card.click();
+      await browser.pause(3000);
+      await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await $("#btn-back-library").click();
+      await browser.pause(600);
+      await browser.reloadSession();
+      await browser.pause(4000);
+      await $('[data-route="library"]').click();
+      await browser.pause(500);
+      const card2 = await $(".book-card:not(.book-card--demo)");
+      await expect(card2).toBeDisplayed();
+      await card2.click();
+      await browser.pause(3000);
+      await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await saveScreenshot("smoke-drop-restart.png");
+      record("S13", "D&D ingest → close/reopen → restart", true);
+    } catch (e) {
+      record("S13", "D&D ingest → close/reopen → restart", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S14 PDF highlight → .md + Citace + panel + reopen", async () => {
+    try {
+      await smokeOpen(pdfPath);
+      await waitPdfTextReady();
+      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
+        "createPdfQuoteFromSelection",
+      );
+      const files = (await invoke("smoke_list_quote_files", {
+        libraryRoot: library,
+        bookSlug: created.slug,
+      })) as string[];
+      if (!files.includes(`${created.quoteId}.md`)) {
+        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
+      }
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      const panelText = await $("#inspector-body .quote-card__text").getText();
+      if (!panelText.includes(created.text.slice(0, 8))) throw new Error("inspector quote mismatch");
+      await $('[data-route="quotes"]').click();
+      await browser.pause(1200);
+      const citace = await $(`[data-user-quote="${created.quoteId}"]`);
+      await expect(citace).toBeDisplayed();
+      await $('[data-route="library"]').click();
+      await browser.pause(400);
+      const card = await $(".book-card:not(.book-card--demo)");
+      await card.click();
+      await waitPdfTextReady();
+      await expect($("#pdf-root mark.quote-highlight")).toBeExisting();
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      record("S14", "PDF quote on disk + Citace + restore", true, created.quoteId);
+    } catch (e) {
+      record("S14", "PDF quote on disk + Citace + restore", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S16 wikilink seed → backlink in notes UI", async () => {
+    try {
+      const seeded = await callSmokeApi<{ targetTitle: string; backlinkCount: number }>("seedWikilinkBacklink");
+      if (seeded.backlinkCount < 1) throw new Error(`expected backlink, got ${seeded.backlinkCount}`);
+      await $('[data-route="notes"]').click();
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
+      const targetBtn = await $(`//button[contains(@class,"note-list-item") and contains(., "${seeded.targetTitle}")]`);
+      await targetBtn.click();
+      await browser.pause(800);
+      const bl = await $("#panel-backlinks-list");
+      await expect(bl).toBeDisplayed();
+      const blText = await bl.getText();
+      if (!blText.includes("Smoke zdroj")) throw new Error(`backlink source missing: ${blText}`);
+      record("S16", "Wikilink + backlink panel", true, `count=${seeded.backlinkCount}`);
+    } catch (e) {
+      record("S16", "Wikilink + backlink panel", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S17 native Open dialog capability + plugin", async () => {
+    try {
+      const dlg = await callSmokeApi<{ ok: boolean; detail: string }>("verifyDialogPlugin");
+      if (!dlg.ok) throw new Error(dlg.detail);
+      const rustCapable = (await invoke("smoke_dialog_capable")) as boolean;
+      if (!rustCapable) throw new Error("smoke_dialog_capable false");
+      record("S17", "Open dialog capability + plugin", true, dlg.detail);
+    } catch (e) {
+      record("S17", "Open dialog capability + plugin", false, String(e));
       throw e;
     }
   });

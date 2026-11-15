@@ -58,3 +58,106 @@ pub fn smoke_open_book(app: AppHandle, library_root: String, file_path: String) 
     )
     .map_err(|e| e.to_string())
 }
+
+#[derive(Clone, Serialize)]
+pub struct SmokeDropPayload {
+    pub library_root: String,
+    pub file_path: String,
+}
+
+/// CI: same ingest path as library drag&drop (absolute fixture path).
+#[tauri::command]
+pub fn smoke_drop_book(app: AppHandle, library_root: String, file_path: String) -> Result<(), String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled (set MARGINALIA_SMOKE=1)".into());
+    }
+    let path = std::path::Path::new(&file_path);
+    if !path.is_absolute() {
+        return Err("file_path must be absolute".into());
+    }
+    app.emit(
+        "marginalia-smoke-drop",
+        SmokeDropPayload {
+            library_root,
+            file_path,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Capability gate: dialog plugin allowed in main window (see capabilities/default.json).
+#[tauri::command]
+pub fn smoke_dialog_capable() -> bool {
+    if !smoke_mode() {
+        return false;
+    }
+    const CAPS: &str = include_str!("../capabilities/default.json");
+    CAPS.contains("dialog:allow-open")
+}
+
+/// CI: first text paragraph from fixture EPUB (chapter.xhtml), without foliate DOM.
+#[tauri::command]
+pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    let path = std::env::var("MARGINALIA_FIXTURE_EPUB").map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let re_body = regex::Regex::new(r"(?is)<body[^>]*>(.*?)</body>").map_err(|e| e.to_string())?;
+    let re_tags = regex::Regex::new(r"<[^>]+>").map_err(|e| e.to_string())?;
+    use std::io::Read;
+    let mut best = String::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = entry.name().to_lowercase();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
+            continue;
+        }
+        if name.contains("nav") || name.contains("toc") {
+            continue;
+        }
+        let mut xml = String::new();
+        entry.read_to_string(&mut xml).map_err(|e| e.to_string())?;
+        let body = re_body
+            .captures(&xml)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or(&xml);
+        let text = re_tags.replace_all(body, " ").to_string();
+        let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if collapsed.len() > best.len() {
+            best = collapsed;
+        }
+    }
+    if best.len() < 3 {
+        return Err("fixture epub has no readable text".into());
+    }
+    Ok(best.chars().take(240).collect())
+}
+
+#[tauri::command]
+pub fn smoke_list_quote_files(library_root: String, book_slug: String) -> Result<Vec<String>, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    let dir = std::path::Path::new(&library_root)
+        .join("citace")
+        .join(&book_slug);
+    let mut out = Vec::new();
+    if !dir.is_dir() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}

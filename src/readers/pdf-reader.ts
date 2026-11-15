@@ -109,6 +109,26 @@ export class PdfReader {
     return null;
   }
 
+  /** Smoke / recovery: first non-empty text span on any page. */
+  quoteDraftFromFirstText(): {
+    text: string;
+    pageIndex: number;
+    anchor: ReturnType<typeof anchorFromPdfSelection>;
+    range: Range;
+    layer: HTMLElement;
+  } | null {
+    for (const [pageIndex, layer] of this.pageRoots) {
+      const span = layer.querySelector("span");
+      if (!span?.textContent?.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      const { start, end, text } = rangeToOffsets(layer, range);
+      const anchor = anchorFromPdfSelection(layer.textContent ?? "", pageIndex, start, end, []);
+      return { text, pageIndex, anchor, range, layer };
+    }
+    return null;
+  }
+
   paintHighlight(_layer: HTMLElement, range: Range): void {
     const mark = document.createElement("mark");
     mark.className = "quote-highlight";

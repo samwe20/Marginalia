@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-library-path",
+    "marginalia-index",
     "smoke-commands",
     "dialog:default",
     "dialog:allow-open",
