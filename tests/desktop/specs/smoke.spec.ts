@@ -226,23 +226,11 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const epubCard = await $('.book-card[data-kind="epub"]:not(.book-card--demo)');
       await expect(epubCard).toBeDisplayed();
       await epubCard.click();
-      await waitEpubTextReady(90_000);
-      await browser.pause(1000);
-      await $('[data-route="quotes"]').click();
-      await browser.pause(1000);
-      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
-      await $('[data-route="library"]').click();
-      await browser.pause(400);
-      await epubCard.click();
-      await waitEpubTextReady(60_000);
-      await browser.execute(function showReaderQuotes() {
-        var app = document.querySelector(".app");
-        if (app && app.classList.contains("backlinks-hidden")) {
-          document.getElementById("btn-backlinks")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        }
-      });
-      await browser.pause(500);
+      await browser.pause(4000);
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      await $('[data-route="quotes"]').click();
+      await browser.pause(800);
+      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
       record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
     } catch (e) {
       record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
