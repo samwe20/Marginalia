@@ -201,6 +201,22 @@ pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
     Ok(best.chars().take(240).collect())
 }
 
+/// CI: read a UTF-8 file under the smoke library (e.g. `knihy/<slug>.md`, `citace/...`).
+#[tauri::command]
+pub fn smoke_read_library_text(library_root: String, relative_path: String) -> Result<String, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    if relative_path.contains("..") || relative_path.starts_with('/') || relative_path.starts_with('\\') {
+        return Err("relative_path must stay inside library".into());
+    }
+    let path = std::path::Path::new(&library_root).join(&relative_path);
+    if !path.starts_with(&library_root) {
+        return Err("path escapes library root".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn smoke_list_quote_files(library_root: String, book_slug: String) -> Result<Vec<String>, String> {
     if !smoke_mode() {

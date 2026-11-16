@@ -5,6 +5,7 @@ import { browser, $, expect } from "@wdio/globals";
 const library = process.env.MARGINALIA_SMOKE_LIBRARY!;
 const pdfPath = process.env.MARGINALIA_FIXTURE_PDF!;
 const epubPath = process.env.MARGINALIA_FIXTURE_EPUB!;
+const mobiPath = process.env.MARGINALIA_FIXTURE_MOBI ?? "";
 const pdfExtraSource = process.env.MARGINALIA_FIXTURE_PDF_EXTRA!;
 const artifactDir =
   process.env.SMOKE_ARTIFACTS_DIR ?? path.join(process.cwd(), "test-results", "desktop-smoke");
@@ -34,17 +35,117 @@ async function waitPdfTextReady(timeoutMs = 45_000) {
   );
 }
 
-async function selectFirstPdfText(): Promise<boolean> {
-  return browser.execute(() => {
+async function quoteFilesOnDisk(slug: string): Promise<string[]> {
+  return (await invoke("smoke_list_quote_files", {
+    libraryRoot: library,
+    bookSlug: slug,
+  })) as string[];
+}
+
+async function readLibraryText(relativePath: string): Promise<string> {
+  return (await invoke("smoke_read_library_text", {
+    libraryRoot: library,
+    relativePath: relativePath,
+  })) as string;
+}
+
+async function ensureInspectorOpen() {
+  await browser.waitUntil(
+    async () => (await $("#btn-backlinks").getAttribute("hidden")) == null,
+    { timeout: 20_000, timeoutMsg: "reader Citace control not visible" },
+  );
+  if ((await $("#app").getAttribute("class"))?.includes("backlinks-hidden")) {
+    await $("#btn-backlinks").click();
+    await browser.pause(400);
+  }
+}
+
+async function pointerDragViewport(fromX: number, fromY: number, toX: number, toY: number) {
+  await browser.performActions([
+    {
+      type: "pointer",
+      id: "finger1",
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, x: fromX, y: fromY, origin: "viewport" },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", duration: 280, x: toX, y: toY, origin: "viewport" },
+        { type: "pointerUp", button: 0 },
+      ],
+    },
+  ]);
+  await browser.releaseActions();
+}
+
+async function pointerSelectPdfText(): Promise<void> {
+  const rect = await browser.execute(() => {
     const span = document.querySelector("#pdf-root .textLayer span") as HTMLElement | null;
-    if (!span?.firstChild) return false;
-    const range = document.createRange();
-    range.selectNodeContents(span);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-    return (sel?.toString().length ?? 0) > 0;
+    if (!span) return null;
+    const r = span.getBoundingClientRect();
+    if (r.width < 8) return null;
+    return {
+      x: Math.floor(r.left + 6),
+      y: Math.floor(r.top + r.height / 2),
+      x2: Math.floor(r.right - 6),
+      y2: Math.floor(r.top + r.height / 2),
+    };
   });
+  if (!rect) throw new Error("PDF text span missing for pointer selection");
+  await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
+}
+
+async function pointerSelectEpubText(): Promise<void> {
+  const rect = await browser.execute(() => {
+    const pickTextEl = (root: ParentNode): HTMLElement | null => {
+      const fb = root.querySelector(".epub-fallback-text p");
+      if (fb) return fb as HTMLElement;
+      const p = root.querySelector("p");
+      return p as HTMLElement | null;
+    };
+    const host = document.querySelector("#epub-root");
+    if (!host) return null;
+    let el = pickTextEl(host);
+    if (!el) {
+      const view = host.querySelector("foliate-view") as HTMLElement & { shadowRoot?: ShadowRoot };
+      if (view?.shadowRoot) el = pickTextEl(view.shadowRoot);
+    }
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 8) return null;
+    return {
+      x: Math.floor(r.left + 6),
+      y: Math.floor(r.top + r.height / 2),
+      x2: Math.floor(r.right - 6),
+      y2: Math.floor(r.top + r.height / 2),
+    };
+  });
+  if (!rect) throw new Error("EPUB/MOBI text not found for pointer selection");
+  await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
+}
+
+async function pressHighlightSaveKey() {
+  await browser.keys(["H"]);
+  await browser.pause(400);
+}
+
+async function clickReaderChromeAwayFromText() {
+  const pt = await browser.execute(() => {
+    const bar = document.querySelector(".reader-toolbar") as HTMLElement | null;
+    if (!bar) return null;
+    const r = bar.getBoundingClientRect();
+    return { x: Math.floor(r.left + r.width / 2), y: Math.floor(r.top + r.height / 2) };
+  });
+  if (!pt) throw new Error("reader toolbar missing for dismiss click");
+  await pointerDragViewport(pt.x, pt.y, pt.x, pt.y);
+  await browser.pause(300);
+}
+
+async function cardSlug(kind: "pdf" | "epub" | "mobi"): Promise<string> {
+  await goLibrary();
+  const card = await $(`.book-card[data-kind="${kind}"]:not(.book-card--demo)`);
+  const slug = await card.getAttribute("data-slug");
+  if (!slug) throw new Error(`missing data-slug on ${kind} card`);
+  return slug;
 }
 
 async function saveScreenshot(name: string) {
@@ -182,7 +283,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
       const pickersBefore = await callSmokeApi<number>("getFolderPickerInvocationCount");
       const loaded = (await callSmokeApi<number>("finishLibrarySetup", library)) ?? 0;
-      if (loaded < 2) throw new Error(`expected PDF+EPUB from folder scan (incl. subfolder), got ${loaded}`);
+      if (loaded < 3) throw new Error(`expected PDF+EPUB+MOBI from folder scan (incl. subfolder), got ${loaded}`);
       if (await callSmokeApi<boolean>("isSetupModalVisible")) {
         throw new Error("setup modal still visible after finishLibrarySetup");
       }
@@ -193,8 +294,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(800);
       const pdfCard = await $('.book-card[data-kind="pdf"]:not(.book-card--demo)');
       const epubCard = await $('.book-card[data-kind="epub"]:not(.book-card--demo)');
+      const mobiCard = await $('.book-card[data-kind="mobi"]:not(.book-card--demo)');
       await expect(pdfCard).toBeDisplayed();
       await expect(epubCard).toBeDisplayed();
+      await expect(mobiCard).toBeDisplayed();
       if (!pdfPath.toLowerCase().includes(`${path.sep}shelf${path.sep}`)) {
         throw new Error(`fixture PDF must live in subfolder for scan test: ${pdfPath}`);
       }
@@ -247,10 +350,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect($('.book-card[data-kind="pdf"]:not(.book-card--demo)')).toBeDisplayed();
       await expect($('.book-card[data-kind="epub"]:not(.book-card--demo)')).toBeDisplayed();
       const cards = await callSmokeApi<number>("countScannedBookCards");
-      if (cards < 2) throw new Error(`expected ≥2 scanned cards, got ${cards}`);
-      record("S04", "Auto-list PDF (podsložka) + EPUB", true, `cards=${cards}`);
+      const mobi = await $('.book-card[data-kind="mobi"]:not(.book-card--demo)');
+      await expect(mobi).toBeDisplayed();
+      if (cards < 3) throw new Error(`expected ≥3 scanned cards (PDF+EPUB+MOBI), got ${cards}`);
+      record("S04", "Auto-list PDF (podsložka) + EPUB + MOBI", true, `cards=${cards}`);
     } catch (e) {
-      record("S04", "Auto-list PDF (podsložka) + EPUB", false, String(e));
+      record("S04", "Auto-list PDF (podsložka) + EPUB + MOBI", false, String(e));
       throw e;
     }
   });
@@ -267,71 +372,60 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S15 EPUB highlight → .md + Citace + panel + reopen", async function () {
+  it("S15 EPUB: výběr bez H neukládá; H uloží citaci", async function () {
     try {
       await ensureEpubReaderOpen();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("epub"));
+      const before = (await quoteFilesOnDisk(slug)).length;
+      await pointerSelectEpubText();
+      await browser.pause(500);
+      const afterSelect = (await quoteFilesOnDisk(slug)).length;
+      if (afterSelect !== before) throw new Error(`EPUB selection alone created quote (${before} → ${afterSelect})`);
+      await pressHighlightSaveKey();
       await browser.waitUntil(
-        async () => (await $("#btn-backlinks").getAttribute("hidden")) == null,
-        { timeout: 20_000, timeoutMsg: "reader mode: Citace toolbar control not visible" },
+        async () => (await quoteFilesOnDisk(slug)).length > before,
+        { timeout: 20_000, timeoutMsg: "EPUB quote .md after H" },
       );
-      const appClass = await $("#app").getAttribute("class");
-      if (appClass?.includes("backlinks-hidden")) {
-        const citaceBtn = await $("#btn-backlinks");
-        await citaceBtn.waitForClickable({ timeout: 10_000 });
-        await citaceBtn.click();
-        await browser.pause(400);
+      const files = await quoteFilesOnDisk(slug);
+      const quoteId = files.find((f) => f.endsWith(".md"))?.replace(/\.md$/, "") ?? "";
+      if (!quoteId) throw new Error("EPUB quote id missing");
+      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      await pointerSelectEpubText();
+      await browser.pause(400);
+      await clickReaderChromeAwayFromText();
+      const afterDismiss = (await quoteFilesOnDisk(slug)).length;
+      if (afterDismiss !== files.length) {
+        throw new Error(`click away without H created quote (${files.length} → ${afterDismiss})`);
       }
-      if ((await $("#app").getAttribute("class"))?.includes("backlinks-hidden")) {
-        await $("#btn-backlinks").click();
-        await browser.pause(300);
-      }
-      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
-        "createEpubQuoteFromSelection",
-      );
-      const files = (await invoke("smoke_list_quote_files", {
-        libraryRoot: library,
-        bookSlug: created.slug,
-      })) as string[];
-      if (!files.includes(`${created.quoteId}.md`)) {
-        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
-      }
-      await browser.waitUntil(
-        async () => {
-          const el = await $("#inspector-body .quote-card__text");
-          return (await el.isExisting()) && (await el.isDisplayed());
-        },
-        { timeout: 15_000, timeoutMsg: "inspector quote card after EPUB highlight" },
-      );
       await openQuotesTab();
-      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
-      await openEpubFromLibraryCard();
-      await openQuotesTab();
-      await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
-      record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
+      await expect($(`[data-user-quote="${quoteId}"]`)).toBeDisplayed();
+      record("S15", "EPUB citace pouze po H (UI)", true, quoteId);
     } catch (e) {
-      record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
+      record("S15", "EPUB citace pouze po H (UI)", false, String(e));
       throw e;
     }
   }).timeout(420_000);
 
-  it("S05 PDF text selection + highlight", async () => {
+  it("S05 PDF: výběr bez H neuloží .md", async () => {
     try {
       await openPdfFromLibraryCard();
-      const ok = await selectFirstPdfText();
-      expect(ok).toBe(true);
-      await saveScreenshot("smoke-pdf-text-selected.png");
-      const highlighted = await browser.execute(() => {
-        return document.querySelectorAll(".quote-highlight, mark.quote-highlight").length;
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      const before = (await quoteFilesOnDisk(slug)).length;
+      await pointerSelectPdfText();
+      await browser.pause(500);
+      const after = (await quoteFilesOnDisk(slug)).length;
+      if (after !== before) throw new Error(`PDF selection alone wrote quote (${before} → ${after})`);
+      const pending = await browser.execute(() => {
+        const sel = window.getSelection();
+        return (sel?.toString().trim().length ?? 0) > 0;
       });
-      record(
-        "S05",
-        "PDF mouse text selection",
-        ok,
-        highlighted ? `highlights=${highlighted}` : "selection only",
-      );
-      if (!ok) throw new Error("PDF text not selectable");
+      if (!pending) throw new Error("PDF pointer selection did not leave text selected");
+      await saveScreenshot("smoke-pdf-text-selected.png");
+      record("S05", "PDF výběr bez citace", true, `quotes=${before}`);
     } catch (e) {
-      record("S05", "PDF mouse text selection", false, String(e));
+      record("S05", "PDF výběr bez citace", false, String(e));
       throw e;
     }
   });
@@ -476,31 +570,201 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S14 PDF highlight → .md + Citace + panel + reopen", async () => {
+  it("S14 PDF: H uloží .md + panel + zvýraznění", async () => {
     try {
       await openPdfFromLibraryCard();
-      const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
-        "createPdfQuoteFromSelection",
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      const before = (await quoteFilesOnDisk(slug)).length;
+      await pointerSelectPdfText();
+      await browser.pause(400);
+      await pressHighlightSaveKey();
+      await browser.waitUntil(
+        async () => (await quoteFilesOnDisk(slug)).length > before,
+        { timeout: 20_000, timeoutMsg: "PDF quote .md after H" },
       );
-      const files = (await invoke("smoke_list_quote_files", {
-        libraryRoot: library,
-        bookSlug: created.slug,
-      })) as string[];
-      if (!files.includes(`${created.quoteId}.md`)) {
-        throw new Error(`quote .md missing on disk: ${files.join(",")}`);
-      }
+      const files = await quoteFilesOnDisk(slug);
+      const quoteId = files[files.length - 1].replace(/\.md$/, "");
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      const panelText = await $("#inspector-body .quote-card__text").getText();
-      if (!panelText.includes(created.text.slice(0, 8))) throw new Error("inspector quote mismatch");
-      await openQuotesTab();
-      const citace = await $(`[data-user-quote="${created.quoteId}"]`);
-      await expect(citace).toBeDisplayed();
-      await openPdfFromLibraryCard();
       await expect($("#pdf-root mark.quote-highlight")).toBeExisting();
-      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      record("S14", "PDF quote on disk + Citace + restore", true, created.quoteId);
+      await openQuotesTab();
+      await expect($(`[data-user-quote="${quoteId}"]`)).toBeDisplayed();
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const panelText = await $("#inspector-body .quote-card__text").getText();
+      if (!panelText.includes("Marginalia")) throw new Error(`unexpected quote text: ${panelText}`);
+      record("S14", "PDF citace po H (UI)", true, quoteId);
     } catch (e) {
-      record("S14", "PDF quote on disk + Citace + restore", false, String(e));
+      record("S14", "PDF citace po H (UI)", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S19 MOBI otevření — viditelný text", async () => {
+    try {
+      if (!mobiPath) throw new Error("MARGINALIA_FIXTURE_MOBI not set");
+      await goLibrary();
+      const card = await $('.book-card[data-kind="mobi"]:not(.book-card--demo)');
+      await card.click();
+      await waitEpubTextReady(120_000);
+      const len = (await callSmokeApi<number>("epubVisibleTextLength")) ?? 0;
+      if (len <= 3) throw new Error(`MOBI visible text too short: ${len}`);
+      await saveScreenshot("smoke-mobi-visible.png");
+      record("S19", "MOBI reader visible text", true, `chars=${len}`);
+    } catch (e) {
+      record("S19", "MOBI reader visible text", false, String(e));
+      throw e;
+    }
+  }).timeout(420_000);
+
+  it("S20 citace knihy A ne u knihy B", async () => {
+    try {
+      const pdfSlug = await cardSlug("pdf");
+      const epubSlug = await cardSlug("epub");
+      const pdfQuotes = await quoteFilesOnDisk(pdfSlug);
+      if (pdfQuotes.length < 1) throw new Error("need PDF quote from S14");
+      const pdfText = await readLibraryText(`citace/${pdfSlug}/${pdfQuotes[0]}`);
+      await openEpubFromLibraryCard();
+      await ensureInspectorOpen();
+      const epubFiles = await quoteFilesOnDisk(epubSlug);
+      const panelText = await $("#inspector-body").getText();
+      if (panelText.includes(pdfText.trim().slice(0, 24))) {
+        throw new Error("EPUB panel shows PDF quote text");
+      }
+      if (epubFiles.length > 0) {
+        for (const f of epubFiles) {
+          if (!f.endsWith(".md")) continue;
+          const body = await readLibraryText(`citace/${epubSlug}/${f}`);
+          if (body.includes(pdfText.trim().slice(0, 24))) {
+            throw new Error("EPUB slug folder contains PDF quote");
+          }
+        }
+      }
+      record("S20", "Per-book quotes in panel", true, `pdf=${pdfQuotes.length} epub=${epubFiles.length}`);
+    } catch (e) {
+      record("S20", "Per-book quotes in panel", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S21 Autor → knihy/*.md + chipy", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      const author = "Smoke Autor Fixture";
+      const input = await $("#reader-author");
+      await input.waitForDisplayed({ timeout: 15_000 });
+      await input.setValue(author);
+      await input.click();
+      await browser.keys(["Tab"]);
+      await browser.pause(800);
+      const cardMd = await readLibraryText(`knihy/${slug}.md`);
+      if (!cardMd.includes(author)) throw new Error(`author not in knihy/${slug}.md`);
+      await ensureInspectorOpen();
+      const chip = await $("#inspector-body .tag-chip--meta[title='Autor']");
+      await expect(chip).toBeDisplayed();
+      const chipText = await chip.getText();
+      if (!chipText.includes(author)) throw new Error(`panel author chip: ${chipText}`);
+      await openQuotesTab();
+      const quoteFiles = await quoteFilesOnDisk(slug);
+      if (!quoteFiles.length) throw new Error("expected PDF quote for author chip check");
+      const qid = quoteFiles[0].replace(/\.md$/, "");
+      const tabChip = await $(`[data-user-quote="${qid}"] .tag-chip--meta[title='Autor']`);
+      await expect(tabChip).toBeDisplayed();
+      const tabAuthor = await tabChip.getText();
+      if (!tabAuthor.includes(author)) throw new Error(`quotes tab author: ${tabAuthor}`);
+      record("S21", "Autor field syncs card + chips", true, slug);
+    } catch (e) {
+      record("S21", "Autor field syncs card + chips", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S22 poznámka k citaci přežije restart", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      const files = await quoteFilesOnDisk(slug);
+      if (!files.length) throw new Error("no PDF quote for note test");
+      const quoteId = files[0].replace(/\.md$/, "");
+      const note = "Smoke poznámka citace 7391";
+      const area = await $(`textarea[data-quote-comment="${quoteId}"]`);
+      await area.waitForDisplayed({ timeout: 10_000 });
+      await area.setValue(note);
+      await area.click();
+      await browser.keys(["Tab"]);
+      await browser.pause(800);
+      let md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
+      if (!md.includes(note)) throw new Error("note not in .md before restart");
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
+      if (!md.includes(note)) throw new Error("note missing in .md after restart");
+      const area2 = await $(`textarea[data-quote-comment="${quoteId}"]`);
+      await area2.waitForDisplayed({ timeout: 15_000 });
+      const val = await area2.getValue();
+      if (!val.includes(note)) throw new Error(`textarea after restart: ${val}`);
+      record("S22", "Quote note persists restart", true, quoteId);
+    } catch (e) {
+      record("S22", "Quote note persists restart", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S23 PDF stránka citace + counter", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      const scrollSecond = await browser.execute(() => {
+        const pages = document.querySelectorAll<HTMLElement>("#pdf-root .pdf-page");
+        if (pages.length < 2) return false;
+        pages[1].scrollIntoView({ block: "center" });
+        return true;
+      });
+      if (!scrollSecond) throw new Error("fixture PDF must have ≥2 pages");
+      await browser.pause(1200);
+      const counter = await $("#reader-page-counter");
+      await browser.waitUntil(
+        async () => {
+          const t = await counter.getText();
+          return /2\/2/.test(t);
+        },
+        { timeout: 15_000, timeoutMsg: "page counter not on 2/2" },
+      );
+      const before = (await quoteFilesOnDisk(slug)).length;
+      const rect = await browser.execute(() => {
+        const page = document.querySelectorAll("#pdf-root .textLayer")[1] as HTMLElement | null;
+        const span = page?.querySelector("span") as HTMLElement | null;
+        if (!span) return null;
+        const r = span.getBoundingClientRect();
+        return {
+          x: Math.floor(r.left + 6),
+          y: Math.floor(r.top + r.height / 2),
+          x2: Math.floor(r.right - 6),
+          y2: Math.floor(r.top + r.height / 2),
+        };
+      });
+      if (!rect) throw new Error("page-two text missing");
+      await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
+      await pressHighlightSaveKey();
+      await browser.waitUntil(
+        async () => (await quoteFilesOnDisk(slug)).length > before,
+        { timeout: 20_000, timeoutMsg: "page-2 quote not saved" },
+      );
+      const files = await quoteFilesOnDisk(slug);
+      const newest = files[files.length - 1];
+      const md = await readLibraryText(`citace/${slug}/${newest}`);
+      if (!/page two/i.test(md)) throw new Error("quote body missing page-two text");
+      const pageLabel = await $("#inspector-body .quote-card__page");
+      const labelText = await pageLabel.getText();
+      if (!labelText.includes("2")) throw new Error(`quote page label expected str. 2, got ${labelText}`);
+      record("S23", "PDF page label + counter", true, labelText);
+    } catch (e) {
+      record("S23", "PDF page label + counter", false, String(e));
       throw e;
     }
   });

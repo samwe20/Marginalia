@@ -30,6 +30,7 @@ $shelfDir = Join-Path $libraryRoot "shelf"
 New-Item -ItemType Directory -Force -Path $shelfDir | Out-Null
 Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.pdf") $shelfDir
 Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.epub") $libraryRoot
+Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.mobi") $libraryRoot
 
 $env:MARGINALIA_APP_EXE = $appExe.FullName
 $env:MARGINALIA_SMOKE_LIBRARY = $libraryRoot
@@ -37,6 +38,7 @@ $env:MARGINALIA_SMOKE = "1"
 $env:MARGINALIA_SMOKE_DEFER_LIBRARY = "1"
 $env:MARGINALIA_FIXTURE_PDF = Join-Path $shelfDir "sample.pdf"
 $env:MARGINALIA_FIXTURE_EPUB = Join-Path $libraryRoot "sample.epub"
+$env:MARGINALIA_FIXTURE_MOBI = Join-Path $libraryRoot "sample.mobi"
 $env:MARGINALIA_FIXTURE_PDF_EXTRA = Join-Path $repoRoot "tests/fixtures/sample.pdf"
 $resultsDir = Join-Path $repoRoot "test-results\desktop-smoke"
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null

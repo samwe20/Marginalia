@@ -19,6 +19,7 @@ exports.config = {
           MARGINALIA_SMOKE_LIBRARY: process.env.MARGINALIA_SMOKE_LIBRARY ?? "",
           MARGINALIA_FIXTURE_PDF: process.env.MARGINALIA_FIXTURE_PDF ?? "",
           MARGINALIA_FIXTURE_EPUB: process.env.MARGINALIA_FIXTURE_EPUB ?? "",
+          MARGINALIA_FIXTURE_MOBI: process.env.MARGINALIA_FIXTURE_MOBI ?? "",
         },
       },
     },
