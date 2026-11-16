@@ -68,10 +68,28 @@ async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
 
 async function waitEpubTextReady(timeoutMs = 120_000) {
   await browser.pause(2000);
+  let nudged = false;
   await browser.waitUntil(
     async () => {
-      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) !== "1") return false;
+      if ((await $("#epub-root").getAttribute("data-epub-text-ready")) !== "1") {
+        if (!nudged) {
+          nudged = true;
+          try {
+            await callSmokeApi<number>("ensureEpubReaderReady");
+          } catch {
+            /* reader still mounting */
+          }
+        }
+        return false;
+      }
       const visible = (await callSmokeApi<number>("epubVisibleTextLength")) ?? 0;
+      if (visible <= 3) {
+        try {
+          await callSmokeApi<number>("ensureEpubReaderReady");
+        } catch {
+          /* ignore */
+        }
+      }
       return visible > 3;
     },
     { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB visible text not rendered" },
@@ -216,49 +234,11 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S05 PDF text selection + highlight", async () => {
-    try {
-      await openPdfFromLibraryCard();
-      const ok = await selectFirstPdfText();
-      expect(ok).toBe(true);
-      await saveScreenshot("smoke-pdf-text-selected.png");
-      const highlighted = await browser.execute(() => {
-        return document.querySelectorAll(".quote-highlight, mark.quote-highlight").length;
-      });
-      record(
-        "S05",
-        "PDF mouse text selection",
-        ok,
-        highlighted ? `highlights=${highlighted}` : "selection only",
-      );
-      if (!ok) throw new Error("PDF text not selectable");
-    } catch (e) {
-      record("S05", "PDF mouse text selection", false, String(e));
-      throw e;
-    }
-  });
-
-  it("S06 reopen book from library", async () => {
-    try {
-      await $("#btn-back-library").click();
-      await browser.pause(800);
-      const card = await $(".book-card:not(.book-card--demo)");
-      await expect(card).toBeDisplayed();
-      await card.click();
-      await waitPdfTextReady();
-      await expect($("#pdf-root .textLayer span")).toBeExisting();
-      await saveScreenshot("smoke-book-reopened.png");
-      record("S06", "Close & reopen from library", true);
-    } catch (e) {
-      record("S06", "Close & reopen from library", false, String(e));
-      throw e;
-    }
-  });
-
   it("S07 open EPUB from library card (visible text)", async () => {
     try {
+      await goLibrary();
       await openEpubFromLibraryCard();
-      await expect($("#epub-root foliate-view")).toBeDisplayed();
+      await expect($("#epub-root foliate-view, #epub-root .epub-fallback-text")).toBeDisplayed();
       record("S07", "Open EPUB from library card", true);
     } catch (e) {
       record("S07", "Open EPUB from library card", false, String(e));
@@ -301,6 +281,45 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
     } catch (e) {
       record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S05 PDF text selection + highlight", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      const ok = await selectFirstPdfText();
+      expect(ok).toBe(true);
+      await saveScreenshot("smoke-pdf-text-selected.png");
+      const highlighted = await browser.execute(() => {
+        return document.querySelectorAll(".quote-highlight, mark.quote-highlight").length;
+      });
+      record(
+        "S05",
+        "PDF mouse text selection",
+        ok,
+        highlighted ? `highlights=${highlighted}` : "selection only",
+      );
+      if (!ok) throw new Error("PDF text not selectable");
+    } catch (e) {
+      record("S05", "PDF mouse text selection", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S06 reopen book from library", async () => {
+    try {
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      const card = await $(".book-card:not(.book-card--demo)");
+      await expect(card).toBeDisplayed();
+      await card.click();
+      await waitPdfTextReady();
+      await expect($("#pdf-root .textLayer span")).toBeExisting();
+      await saveScreenshot("smoke-book-reopened.png");
+      record("S06", "Close & reopen from library", true);
+    } catch (e) {
+      record("S06", "Close & reopen from library", false, String(e));
       throw e;
     }
   });

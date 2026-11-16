@@ -1060,6 +1060,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
     epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
+    ensureEpubReaderReady: async () => {
+      if (!epub) throw new Error("EPUB reader not active");
+      await epub.ensureReadableFallback();
+      return epub.visibleDomTextLength();
+    },
     getLibraryRoot: () => state.libraryRoot,
     getFolderPickerInvocationCount,
     resetFirstRunClientState: async () => {

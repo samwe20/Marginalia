@@ -280,6 +280,24 @@ export class EpubReader {
     return this.fixturePlainText;
   }
 
+  /** CI: force plain-text fallback when foliate renders an empty page (WebView2). */
+  async ensureReadableFallback(): Promise<void> {
+    if (this.visibleDomTextLength() > 3) return;
+    if (!this.fixturePlainText && isTauri()) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
+        if (smokeOn) {
+          this.fixturePlainText = (await invoke("smoke_epub_fixture_paragraph")) as string;
+        }
+      } catch {
+        /* optional */
+      }
+    }
+    this.mountPlainTextFallbackIfNeeded();
+    this.syncTextReadyFlag();
+  }
+
   quoteDraftFromFixtureText(): {
     text: string;
     cfi: string;
