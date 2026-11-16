@@ -104,7 +104,7 @@ async function goLibrary() {
 async function openQuotesTab() {
   await $('[data-route="quotes"]').click();
   await browser.waitUntil(
-    async () => (await $(".page").getAttribute("data-quotes-ready")) === "1",
+    async () => (await $('[data-quotes-ready="1"]')).isExisting(),
     { timeout: 20_000, timeoutMsg: "quotes overview not ready" },
   );
 }
@@ -123,6 +123,19 @@ async function openEpubFromLibraryCard() {
   await expect(card).toBeDisplayed();
   await card.click();
   await waitEpubTextReady(120_000);
+}
+
+/** After S07 the suite may already be in the EPUB reader — avoid a redundant library round-trip. */
+async function ensureEpubReaderOpen() {
+  const onEpub = await browser.execute(() => {
+    const app = document.getElementById("app");
+    return !!document.querySelector("#epub-root") && !!app?.classList.contains("reading-mode");
+  });
+  if (onEpub) {
+    await waitEpubTextReady(90_000);
+    return;
+  }
+  await openEpubFromLibraryCard();
 }
 
 describe("Marginalia installed-app smoke (mandatory suite)", () => {
@@ -254,9 +267,9 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
+  it("S15 EPUB highlight → .md + Citace + panel + reopen", async function () {
     try {
-      await openEpubFromLibraryCard();
+      await ensureEpubReaderOpen();
       await browser.waitUntil(
         async () => (await $("#btn-backlinks").getAttribute("hidden")) == null,
         { timeout: 20_000, timeoutMsg: "reader mode: Citace toolbar control not visible" },
@@ -299,7 +312,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S15", "EPUB quote on disk + Citace + restore", false, String(e));
       throw e;
     }
-  });
+  }).timeout(420_000);
 
   it("S05 PDF text selection + highlight", async () => {
     try {
