@@ -400,6 +400,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S13 rescan picks up newly added file", async () => {
     try {
       if (!pdfExtraSource) throw new Error("MARGINALIA_FIXTURE_PDF_EXTRA not set");
+      await goLibrary();
       const before = await callSmokeApi<number>("countScannedBookCards");
       await invoke("smoke_stage_file_in_library", {
         libraryRoot: library,
@@ -408,8 +409,11 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       });
       const rescan = await callSmokeApi<{ imported: number; total: number }>("rescanBooksFromFolder");
       await browser.pause(800);
+      await goLibrary();
       const after = await callSmokeApi<number>("countScannedBookCards");
-      if (after <= before) throw new Error(`rescan did not add card (${before} → ${after}, imported=${rescan.imported})`);
+      if (after <= before || rescan.total <= before) {
+        throw new Error(`rescan did not add book (${before} → ${after}, total=${rescan.total}, imported=${rescan.imported})`);
+      }
       await goLibrary();
       const extraCard = await $('.book-card[data-kind="pdf"]:not(.book-card--demo)');
       const count = (await $$('.book-card[data-kind="pdf"]:not(.book-card--demo)')).length;

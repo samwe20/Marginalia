@@ -1109,9 +1109,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (state.route === "library") await renderLibrary();
       return { imported, total: (await listBooksForLibrary()).length };
     },
-    countScannedBookCards: async () => {
-      return document.querySelectorAll(".book-card:not(.book-card--demo)").length;
-    },
+    countScannedBookCards: async () => (await listBooksForLibrary()).length,
     isSetupModalVisible: () => isLibrarySetupModalVisible(),
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {

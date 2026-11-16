@@ -4,8 +4,7 @@ import { prepareWebLibrary } from "./helpers";
 
 test.describe("theme preference", () => {
   test("světlý motiv v Nastavení", async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".sidebar");
+    await prepareWebLibrary(page);
     await page.locator('.nav-item[data-route="settings"]').click();
     await page.locator('[data-theme-pref="dark"]').click();
     await expect(page.locator("#app[data-theme='dark']")).toBeVisible();
