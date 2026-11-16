@@ -78,8 +78,8 @@ async function pointerDragViewport(fromX: number, fromY: number, toX: number, to
 }
 
 async function pointerSelectPdfText(): Promise<void> {
-  const rect = await browser.execute(() => {
-    const span = document.querySelector("#pdf-root .textLayer span") as HTMLElement | null;
+  const rect = (await browser.execute(function selectPdfTextRect() {
+    const span = document.querySelector("#pdf-root .textLayer span");
     if (!span) return null;
     const r = span.getBoundingClientRect();
     if (r.width < 8) return null;
@@ -89,25 +89,20 @@ async function pointerSelectPdfText(): Promise<void> {
       x2: Math.floor(r.right - 6),
       y2: Math.floor(r.top + r.height / 2),
     };
-  });
+  })) as { x: number; y: number; x2: number; y2: number } | null;
   if (!rect) throw new Error("PDF text span missing for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
 async function pointerSelectEpubText(): Promise<void> {
-  const rect = await browser.execute(() => {
-    const pickTextEl = (root: ParentNode): HTMLElement | null => {
-      const fb = root.querySelector(".epub-fallback-text p");
-      if (fb) return fb as HTMLElement;
-      const p = root.querySelector("p");
-      return p as HTMLElement | null;
-    };
+  const rect = (await browser.execute(function selectEpubTextRect() {
     const host = document.querySelector("#epub-root");
     if (!host) return null;
-    let el = pickTextEl(host);
+    let el = host.querySelector(".epub-fallback-text p") || host.querySelector("p");
     if (!el) {
-      const view = host.querySelector("foliate-view") as HTMLElement & { shadowRoot?: ShadowRoot };
-      if (view?.shadowRoot) el = pickTextEl(view.shadowRoot);
+      const view = host.querySelector("foliate-view");
+      const shadow = view && view.shadowRoot;
+      if (shadow) el = shadow.querySelector(".epub-fallback-text p") || shadow.querySelector("p");
     }
     if (!el) return null;
     const r = el.getBoundingClientRect();
@@ -118,7 +113,7 @@ async function pointerSelectEpubText(): Promise<void> {
       x2: Math.floor(r.right - 6),
       y2: Math.floor(r.top + r.height / 2),
     };
-  });
+  })) as { x: number; y: number; x2: number; y2: number } | null;
   if (!rect) throw new Error("EPUB/MOBI text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
@@ -129,12 +124,12 @@ async function pressHighlightSaveKey() {
 }
 
 async function clickReaderChromeAwayFromText() {
-  const pt = await browser.execute(() => {
-    const bar = document.querySelector(".reader-toolbar") as HTMLElement | null;
+  const pt = (await browser.execute(function readerToolbarPoint() {
+    const bar = document.querySelector(".reader-toolbar");
     if (!bar) return null;
     const r = bar.getBoundingClientRect();
     return { x: Math.floor(r.left + r.width / 2), y: Math.floor(r.top + r.height / 2) };
-  });
+  })) as { x: number; y: number } | null;
   if (!pt) throw new Error("reader toolbar missing for dismiss click");
   await pointerDragViewport(pt.x, pt.y, pt.x, pt.y);
   await browser.pause(300);
@@ -665,6 +660,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect(chip).toBeDisplayed();
       const chipText = await chip.getText();
       if (!chipText.includes(author)) throw new Error(`panel author chip: ${chipText}`);
+      await goLibrary();
       await openQuotesTab();
       const quoteFiles = await quoteFilesOnDisk(slug);
       if (!quoteFiles.length) throw new Error("expected PDF quote for author chip check");
@@ -719,10 +715,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await openPdfFromLibraryCard();
       await ensureInspectorOpen();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
-      const scrollSecond = await browser.execute(() => {
-        const pages = document.querySelectorAll<HTMLElement>("#pdf-root .pdf-page");
-        if (pages.length < 2) return false;
-        pages[1].scrollIntoView({ block: "center" });
+      const scrollSecond = await browser.execute(function scrollPdfSecondPage() {
+        const surface = document.querySelector(".reader-surface");
+        const pages = document.querySelectorAll("#pdf-root .pdf-page");
+        if (!surface || pages.length < 2) return false;
+        const target = pages[1];
+        surface.scrollTop = Math.max(0, target.offsetTop - surface.clientHeight / 2);
         return true;
       });
       if (!scrollSecond) throw new Error("fixture PDF must have ≥2 pages");
@@ -736,9 +734,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         { timeout: 15_000, timeoutMsg: "page counter not on 2/2" },
       );
       const before = (await quoteFilesOnDisk(slug)).length;
-      const rect = await browser.execute(() => {
-        const page = document.querySelectorAll("#pdf-root .textLayer")[1] as HTMLElement | null;
-        const span = page?.querySelector("span") as HTMLElement | null;
+      const rect = (await browser.execute(function selectPdfPageTwoText() {
+        const layers = document.querySelectorAll("#pdf-root .textLayer");
+        if (layers.length < 2) return null;
+        const span = layers[1].querySelector("span");
         if (!span) return null;
         const r = span.getBoundingClientRect();
         return {
@@ -747,7 +746,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
           x2: Math.floor(r.right - 6),
           y2: Math.floor(r.top + r.height / 2),
         };
-      });
+      })) as { x: number; y: number; x2: number; y2: number } | null;
       if (!rect) throw new Error("page-two text missing");
       await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
       await pressHighlightSaveKey();
@@ -758,9 +757,19 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const files = await quoteFilesOnDisk(slug);
       const newest = files[files.length - 1];
       const md = await readLibraryText(`citace/${slug}/${newest}`);
-      if (!/page two/i.test(md)) throw new Error("quote body missing page-two text");
-      const pageLabel = await $("#inspector-body .quote-card__page");
-      const labelText = await pageLabel.getText();
+      if (!/^page:\s*"?2"?\s*$/m.test(md)) {
+        throw new Error(`quote frontmatter page not 2: ${md.slice(0, 400)}`);
+      }
+      const cards = await $$("#inspector-body .quote-card");
+      let labelText = "";
+      for (const card of cards) {
+        const pageDiv = await card.$(".quote-card__page");
+        const t = await pageDiv.getText();
+        if (t.includes("2")) {
+          labelText = t;
+          break;
+        }
+      }
       if (!labelText.includes("2")) throw new Error(`quote page label expected str. 2, got ${labelText}`);
       record("S23", "PDF page label + counter", true, labelText);
     } catch (e) {

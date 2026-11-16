@@ -29,7 +29,7 @@ export type UserQuoteCardOpts = {
 };
 
 export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardOpts = {}): string {
-  const author = doc.meta.author.trim() || opts.bookAuthorFallback?.trim() || "Neznámý autor";
+  const author = opts.bookAuthorFallback?.trim() || doc.meta.author.trim() || "Neznámý autor";
   const book = doc.meta.book_title.trim() || "—";
   const when = formatDateCs(doc.meta.created);
   const attrs = Object.entries(opts.listAttrs ?? {})

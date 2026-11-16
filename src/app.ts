@@ -283,6 +283,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       filePath: state.book.filePath,
     });
     if (state.route === "reader") await refreshInspectorAfterQuoteSave(state.slug);
+    if (state.route === "quotes") await renderQuotesOverview();
   };
 
   const bindQuoteCommentEditors = (root: ParentNode) => {
