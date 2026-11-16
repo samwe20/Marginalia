@@ -839,6 +839,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   };
 
+  const enterReaderMode = () => {
+    state.route = "reader";
+    setRoute("reader");
+    state.inspectorOpen = true;
+    syncReadingChrome();
+  };
+
   const mountReaderChrome = (kind: BookFileKind, title: string) => {
     const foliate = kind !== "pdf";
     stageMain.innerHTML = `
@@ -914,6 +921,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       epub?.destroy();
       epub = null;
       mountReaderChrome("pdf", state.book.title);
+      enterReaderMode();
       const pdfRoot = stageMain.querySelector("#pdf-root") as HTMLElement;
       pdf = new PdfReader({
         container: pdfRoot,
@@ -938,6 +946,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pdf?.destroy();
       pdf = null;
       mountReaderChrome(fileKind, state.book.title);
+      enterReaderMode();
       const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
       epub = new EpubReader({
         container: epubRoot,
@@ -957,10 +966,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       throw new Error("Nepodporovaný formát — použijte PDF, EPUB nebo MOBI/AZW.");
     }
 
-    state.route = "reader";
-    setRoute("reader");
-    state.inspectorOpen = true;
-    syncReadingChrome();
+    enterReaderMode();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);

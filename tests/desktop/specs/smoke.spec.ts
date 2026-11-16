@@ -255,7 +255,9 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       );
       const appClass = await $("#app").getAttribute("class");
       if (appClass?.includes("backlinks-hidden")) {
-        await callSmokeApi("ensureInspectorOpen");
+        const citaceBtn = await $("#btn-backlinks");
+        await citaceBtn.waitForClickable({ timeout: 10_000 });
+        await citaceBtn.click();
         await browser.pause(400);
       }
       const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
