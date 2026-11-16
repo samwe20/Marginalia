@@ -1,7 +1,7 @@
 {
   "name": "marginalia",
   "private": true,
-  "version": "0.1.0-prototype.5",
+  "version": "0.1.0-prototype.6",
   "description": "Private Windows app for book highlights and Markdown quotes (Tauri 2).",
   "repository": {
     "type": "git",

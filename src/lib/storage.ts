@@ -103,7 +103,11 @@ export async function loadAllQuotesFromLibrary(libraryRoot: string): Promise<Quo
       const slugs = await readDir(root);
       for (const s of slugs) {
         if (!s.isDirectory || !s.name) continue;
-        docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        try {
+          docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        } catch {
+          /* skip unreadable quote dirs */
+        }
       }
     } catch {
       return [];
@@ -128,8 +132,12 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
       const entries = await readDir(dir);
       for (const e of entries) {
         if (e.isFile && e.name?.endsWith(".md")) {
-          const text = await readTextFile(`${dir}/${e.name}`);
-          docs.push(parseQuoteMarkdown(text));
+          try {
+            const text = await readTextFile(`${dir}/${e.name}`);
+            docs.push(parseQuoteMarkdown(text));
+          } catch {
+            /* skip corrupt quote files */
+          }
         }
       }
     } catch {

@@ -7,9 +7,21 @@ export type SmokeTestApi = {
   createPdfQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   createEpubQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   epubReaderReady: () => boolean;
+  epubVisibleTextLength: () => number;
+  ensureEpubReaderReady: () => Promise<number>;
+  ensureInspectorOpen: () => void;
   verifyDialogPlugin: () => Promise<{ ok: boolean; detail: string }>;
   seedWikilinkBacklink: () => Promise<{ targetTitle: string; backlinkCount: number }>;
   currentBookSlug: () => string | null;
+  getLibraryRoot: () => string;
+  getFolderPickerInvocationCount: () => number;
+  resetFirstRunClientState: () => Promise<void>;
+  adoptFixtureLibrary: () => Promise<string>;
+  openBookAtPath: (filePath: string, libraryRoot?: string) => Promise<void>;
+  finishLibrarySetup: (libraryRoot: string) => Promise<number>;
+  rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
+  countScannedBookCards: () => Promise<number>;
+  isSetupModalVisible: () => boolean;
 };
 
 declare global {

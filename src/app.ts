@@ -29,9 +29,22 @@ import {
 import { smokeOpenShortcutActive, wireSmokeAutomation } from "./lib/smoke-bridge";
 import { installSmokeTestApi } from "./lib/smoke-test-api";
 import { smokeVerifyDialogPlugin } from "./lib/open-book";
+import { type BookFileKind, detectBookFileKind, mimeForBookFileName } from "./lib/book-formats";
+import { createDocumentsMarginaliaFolder, ensureLibrarySubdirs } from "./lib/library-root";
+import { syncAllBooksFromLibraryFolder } from "./lib/library-import";
+import {
+  hideLibrarySetupModal,
+  isLibrarySetupModalVisible,
+  showLibrarySetupModal,
+} from "./ui/library-setup-modal";
+import {
+  getFolderPickerInvocationCount,
+  recordFolderPickerInvocation,
+  resetFolderPickerInvocationCount,
+} from "./lib/library-root-telemetry";
 import { createBlankNote, saveNote } from "./lib/notes";
 import type { initThemePreference } from "./ui/theme-preference";
-import { PdfReader } from "./readers/pdf-reader";
+import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import {
   DEMO_ENABLED_KEY,
@@ -48,8 +61,8 @@ import {
 } from "./lib/demo-data";
 import { listNotes } from "./lib/notes";
 import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
-import { anchorFromEpubSelection } from "./lib/anchor";
-import { escapeAttr, escapeHtml } from "./lib/html";
+import { escapeAttr, escapeHtml, formatDateCs } from "./lib/html";
+import type { QuoteDocument } from "./lib/quote-markdown";
 import { icons } from "./ui/icons";
 import {
   renderBookDetailPage,
@@ -116,6 +129,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   let pdf: PdfReader | null = null;
+  let pdfPageCounterDetach: (() => void) | null = null;
   let epub: EpubReader | null = null;
   const linkIndex = new NoteIndex();
   let activeNoteId: string | undefined;
@@ -128,6 +142,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       setRoute("notes");
     },
     createNoteWithTitle: async (title: string) => {
+      if (!(await requireLibraryConfigured())) return;
       await createNoteFromTitle(state.libraryRoot, title, linkIndex, {
         openNoteEditor: (id) => {
           activeNoteId = id;
@@ -206,7 +221,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const fileInput = document.createElement("input");
   fileInput.type = "file";
-  fileInput.accept = ".pdf,.epub";
+  fileInput.accept = ".pdf,.epub,.mobi,.azw,.azw3";
   fileInput.id = "file-open";
   fileInput.className = "hidden-input";
   fileInput.setAttribute("data-testid", "file-open");
@@ -283,16 +298,40 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   };
 
-  const renderInspectorQuotes = (quotes: { quoteText: string; page: string }[]) => {
-    if (!quotes.length) {
+  const formatQuotePageLabel = (page: string): string => {
+    const p = page.trim();
+    if (/^\d+$/.test(p)) return `str. ${p}`;
+    if (p.length > 28) return `${p.slice(0, 14)}…`;
+    return p || "—";
+  };
+
+  const refreshInspectorAfterQuoteSave = async (slug: string) => {
+    const docs = await loadQuotesForBook(state.libraryRoot, slug);
+    renderInspectorQuotes(docs);
+    state.inspectorOpen = true;
+    syncReadingChrome();
+  };
+
+  const renderInspectorQuotes = (docs: QuoteDocument[]) => {
+    if (!docs.length) {
       inspectorBody.innerHTML = `<p class="muted">Zatím žádné citace. Zapněte zvýrazňování a označte text v knize.</p>`;
       return;
     }
-    inspectorBody.innerHTML = `<ul class="quote-list">${quotes
-      .map(
-        (q) =>
-          `<li class="quote-card"><div class="quote-card__page">${escapeHtml(q.page)}</div><div class="quote-card__text">${escapeHtml(q.quoteText)}</div></li>`,
-      )
+    inspectorBody.innerHTML = `<ul class="quote-list">${docs
+      .map((d) => {
+        const author = d.meta.author.trim() || "Neznámý autor";
+        const book = d.meta.book_title.trim() || "—";
+        const when = formatDateCs(d.meta.created);
+        return `<li class="quote-card">
+          <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(d.meta.page))}</div>
+          <div class="quote-card__text">${escapeHtml(d.quoteText)}</div>
+          <div class="tag-row quote-card__meta" aria-label="Metadata citace">
+            <span class="tag-chip tag-chip--meta" title="Autor">${escapeHtml(author)}</span>
+            <span class="tag-chip tag-chip--meta" title="Dílo">${escapeHtml(book)}</span>
+            <span class="tag-chip tag-chip--meta" title="Vytvořeno">${escapeHtml(when)}</span>
+          </div>
+        </li>`;
+      })
       .join("")}</ul>`;
   };
 
@@ -314,15 +353,25 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
     setContextTitle(label);
     if (route === "library") void renderLibrary();
-    if (route === "quotes") void renderQuotesOverview();
+    if (route === "quotes") {
+      stageMain.innerHTML = `<div class="page" data-quotes-loading="1"><p class="muted">Načítám citace…</p></div>`;
+      void renderQuotesOverview();
+    }
     if (route === "notes") {
-      void renderNotesView(stageMain, {
-        libraryRoot: state.libraryRoot,
-        index: linkIndex,
-        theme: themeCtrl.getEffective(),
-        wiki: wikiHandlers,
-        onReindex: reindexLinks,
-      }, activeNoteId);
+      void (async () => {
+        if (!(await requireLibraryConfigured())) return;
+        void renderNotesView(
+          stageMain,
+          {
+            libraryRoot: state.libraryRoot,
+            index: linkIndex,
+            theme: themeCtrl.getEffective(),
+            wiki: wikiHandlers,
+            onReindex: reindexLinks,
+          },
+          activeNoteId,
+        );
+      })();
     }
     if (route === "search") renderSearch();
     if (route === "settings") renderSettings();
@@ -389,13 +438,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
-        <p class="page-intro">Otevřete PDF nebo EPUB, nebo přetáhněte soubor do oblasti níže.</p>
+        <p class="page-intro">PDF, EPUB a MOBI/AZW ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
         <div class="page-actions">
-          <button type="button" class="primary-btn" id="btn-open-book" data-testid="btn-open-book">Otevřít knihu…</button>
-          <button type="button" class="ghost-btn solid" id="btn-library-folder">Složka knihovny…</button>
-        </div>
-        <div class="drop-zone" id="drop-zone" data-testid="drop-zone" tabindex="0" aria-label="Oblast pro přetažení knihy">
-          Přetáhněte sem PDF nebo EPUB
+          <button type="button" class="primary-btn" id="btn-rescan-books" data-testid="btn-rescan-books">Obnovit knihy ze složky</button>
+          <button type="button" class="ghost-btn solid" id="btn-library-folder">Změnit složku knihovny…</button>
         </div>
         ${
           demoBooks.length
@@ -425,31 +471,19 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 .join("")}</div></section>`
             : demoBooks.length
               ? ""
-              : `<p class="muted">Knihovna je prázdná — začněte otevřením knihy nebo načtěte ukázková data v Nastavení.</p>`
+              : `<p class="muted">Ve složce knihovny zatím nejsou podporované knihy — přidejte PDF, EPUB nebo MOBI a zvolte Obnovit knihy.</p>`
         }
       </div>
     `;
 
-    stageMain.querySelector("#btn-open-book")?.addEventListener("click", () => void promptOpenBook());
-    stageMain.querySelector("#btn-library-folder")?.addEventListener("click", () => void pickLibrary());
-    const zone = stageMain.querySelector("#drop-zone")!;
-    zone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      zone.classList.add("drop-zone--active");
-    });
-    zone.addEventListener("dragleave", () => zone.classList.remove("drop-zone--active"));
-    zone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      zone.classList.remove("drop-zone--active");
-      const file = (e as DragEvent).dataTransfer?.files?.[0];
-      if (file) void openBookFile(file);
-    });
+    stageMain.querySelector("#btn-rescan-books")?.addEventListener("click", () => void rescanBooksFromFolder());
+    stageMain.querySelector("#btn-library-folder")?.addEventListener("click", () => void pickLibrary(true));
     stageMain.querySelectorAll(".book-card:not(.book-card--demo)").forEach((card) => {
       card.addEventListener("click", () => {
         const el = card as HTMLElement;
         void reopenRecentBook({
           slug: el.dataset.slug!,
-          kind: el.dataset.kind as "pdf" | "epub",
+          kind: el.dataset.kind as BookFileKind,
           title: el.dataset.title ?? "",
           author: el.dataset.author ?? "",
           sha256: el.dataset.sha256 ?? "",
@@ -462,17 +496,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const renderQuotesOverview = async () => {
     const userQuotes = state.libraryRoot ? await loadAllQuotesFromLibrary(state.libraryRoot) : [];
-    if (!isDemoEnabled() && !userQuotes.length) {
+    if (userQuotes.length) {
       stageMain.innerHTML = `
-        <div class="page">
-          <h1>Databáze citací</h1>
-          <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
-        </div>`;
-      return;
-    }
-    if (userQuotes.length && !isDemoEnabled()) {
-      stageMain.innerHTML = `
-        <div class="page page--wide">
+        <div class="page page--wide" data-quotes-ready="1">
           <h1>Databáze citací</h1>
           <p class="muted results-count">${userQuotes.length} citací z knihovny</p>
           <ul class="quote-list user-quote-list">${userQuotes
@@ -481,6 +507,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 `<li class="quote-card" data-user-quote="${escapeAttr(d.meta.id)}"><div class="quote-card__page">${escapeHtml(d.meta.page)}</div><div class="quote-card__text">${escapeHtml(d.quoteText)}</div></li>`,
             )
             .join("")}</ul>
+        </div>`;
+      return;
+    }
+    if (!isDemoEnabled()) {
+      stageMain.innerHTML = `
+        <div class="page" data-quotes-ready="1">
+          <h1>Databáze citací</h1>
+          <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
         </div>`;
       return;
     }
@@ -495,7 +529,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const bookMap = new Map(books.map((b) => [b.slug, b]));
     stageMain.innerHTML = `
-      <div class="page page--wide">
+      <div class="page page--wide" data-quotes-ready="1">
         <h1>Databáze citací</h1>
         <p class="muted">Ukázkové citace a poznámky — filtrujte podle knihy, štítku nebo textu.</p>
         <div class="filters-bar">
@@ -707,7 +741,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         <p class="muted">Stav: ${demoOn ? "ukázková data jsou aktivní" : "vypnuto (výchozí)"}</p>
       </div>
     `;
-    stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary());
+    stageMain.querySelector("#btn-settings-library")?.addEventListener("click", () => void pickLibrary(true));
     stageMain.querySelectorAll("[data-theme-pref]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const pref = (btn as HTMLElement).dataset.themePref as "system" | "light" | "dark";
@@ -745,35 +779,100 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   };
 
-  const pickLibrary = async () => {
-    if (isTauri()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({ directory: true, multiple: false });
-      if (typeof selected === "string") {
-        await setLibraryRoot(selected);
-        await openLibraryIndex(selected);
-        setLibraryPath(selected, selected);
-        setStatus(`Knihovna: ${selected}`);
-        toast("Složka knihovny nastavena", "success");
-        if (state.route === "settings") renderSettings();
-      }
-    } else {
+  const pushRecentFromImport = (book: LibraryBookEntry) => {
+    pushRecent({ ...book, updated: book.updated || new Date().toISOString() });
+  };
+
+  const rescanBooksFromFolder = async () => {
+    if (!(await requireLibraryConfigured())) return;
+    const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+    toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové knihy (PDF/EPUB/MOBI)", n ? "success" : "info");
+    if (state.route === "library") await renderLibrary();
+  };
+
+  const finishLibrarySetup = async (root: string) => {
+    await setLibraryRoot(root);
+    await ensureLibrarySubdirs(root);
+    await openLibraryIndex(root);
+    setLibraryPath(root, root);
+    setStatus(`Knihovna: ${root}`);
+    hideLibrarySetupModal();
+    const n = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport);
+    toast(`Knihovna nastavena — načteno ${n} knih`, "success");
+    if (state.route === "settings") renderSettings();
+    if (state.route === "library") await renderLibrary();
+  };
+
+  const requireLibraryConfigured = async (): Promise<boolean> => {
+    if (state.libraryRoot) return true;
+    openLibrarySetupModal();
+    return false;
+  };
+
+  const openLibrarySetupModal = () => {
+    showLibrarySetupModal({
+      onChooseFolder: () => void pickLibrary(false),
+      onCreateFolder: () => void createNewLibraryFolder(),
+    });
+  };
+
+  const createNewLibraryFolder = async () => {
+    if (!isTauri()) {
       state.libraryRoot = "/Marginalia";
       localStorage.setItem("marginalia.libraryRoot", state.libraryRoot);
-      setLibraryPath("Web režim (localStorage)");
-      toast("Web režim — localStorage", "info");
+      await finishLibrarySetup(state.libraryRoot);
+      return;
+    }
+    const root = await createDocumentsMarginaliaFolder({
+      setLibraryRoot,
+      openLibraryIndex,
+      setLibraryPath,
+      toast,
+      renderSettings,
+      route: state.route,
+    });
+    await finishLibrarySetup(root);
+  };
+
+  const pickLibrary = async (_settingsFlow = false) => {
+    if (isTauri()) {
+      recordFolderPickerInvocation();
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Vyberte složku knihovny",
+      });
+      if (typeof selected === "string") await finishLibrarySetup(selected);
+    } else {
+      await finishLibrarySetup("/Marginalia");
     }
   };
 
-  const mountReaderChrome = (kind: "pdf" | "epub", title: string) => {
+  const enterReaderMode = () => {
+    state.route = "reader";
+    setRoute("reader");
+    state.inspectorOpen = true;
+    syncReadingChrome();
+  };
+
+  const mountReaderChrome = (kind: BookFileKind, title: string) => {
+    const foliate = kind !== "pdf";
     stageMain.innerHTML = `
-      <div class="reader-toolbar">
-        <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
-        <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
+      <div class="reader-layout">
+        <div class="reader-toolbar">
+          <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
+          <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
+        </div>
+        <div class="reader-surface">
+          <div id="${foliate ? "epub-root" : "pdf-root"}" class="${foliate ? "epub-root" : "pdf-root"}"></div>
+        </div>
+        <div class="reader-page-counter" id="reader-page-counter" ${foliate ? "hidden" : ""} aria-live="polite">—</div>
       </div>
-      <div class="reader-surface"><div id="${kind === "pdf" ? "pdf-root" : "epub-root"}" class="${kind === "pdf" ? "pdf-root" : "epub-root"}"></div></div>
     `;
     stageMain.querySelector("#btn-back-library")?.addEventListener("click", () => {
+      pdfPageCounterDetach?.();
+      pdfPageCounterDetach = null;
       pdf?.destroy();
       epub?.destroy();
       pdf = null;
@@ -784,6 +883,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const promptOpenBook = async () => {
+    if (!(await requireLibraryConfigured())) return;
     try {
       const fromDialog = await pickBookFileViaDialog();
       if (fromDialog) {
@@ -804,7 +904,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     opts: { slug?: string; storedPath?: string; skipPersist?: boolean } = {},
   ) => {
     const sha = await sha256Hex(buffer);
-    const lower = fileName.toLowerCase();
+    const fileKind = detectBookFileKind(fileName);
     try {
     state.book = {
       title: fileName.replace(/\.[^.]+$/, ""),
@@ -812,7 +912,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       sha256: sha,
       filePath: opts.storedPath ?? fileName,
     };
-    if (!state.libraryRoot) await pickLibrary();
+    if (!(await requireLibraryConfigured())) return;
     let slug = opts.slug;
     if (!opts.skipPersist) {
       const persisted = await persistBookFile(state.libraryRoot, state.book, buffer, fileName);
@@ -826,64 +926,66 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     await ensureBookCard(state.libraryRoot, state.book);
     const now = new Date().toISOString();
 
-    if (lower.endsWith(".pdf")) {
+    if (fileKind === "pdf") {
       pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
       epub?.destroy();
       epub = null;
       mountReaderChrome("pdf", state.book.title);
+      enterReaderMode();
       const pdfRoot = stageMain.querySelector("#pdf-root") as HTMLElement;
       pdf = new PdfReader({
         container: pdfRoot,
         getMode: () => state.mode,
         onHighlight: async ({ text, pageIndex, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
-          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          await refreshInspectorAfterQuoteSave(state.slug);
           toast("Citace uložena", "success");
         },
       });
       await pdf.load(buffer);
+      const surface = stageMain.querySelector(".reader-surface") as HTMLElement;
+      const counter = stageMain.querySelector("#reader-page-counter") as HTMLElement;
+      pdfPageCounterDetach?.();
+      pdfPageCounterDetach = attachPdfPageCounter(surface, pdfRoot, counter, pdf.getPageCount());
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
-    } else if (lower.endsWith(".epub")) {
-      pushRecent({ ...state.book, slug: state.slug, kind: "epub", updated: now });
+      await refreshInspectorAfterQuoteSave(state.slug);
+    } else if (fileKind === "epub" || fileKind === "mobi") {
+      pushRecent({ ...state.book, slug: state.slug, kind: fileKind, updated: now });
       pdf?.destroy();
       pdf = null;
-      mountReaderChrome("epub", state.book.title);
+      mountReaderChrome(fileKind, state.book.title);
+      enterReaderMode();
       const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
       epub = new EpubReader({
         container: epubRoot,
         getMode: () => state.mode,
         onHighlight: async ({ text, cfi, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
-          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+          await refreshInspectorAfterQuoteSave(state.slug);
           toast("Citace uložena", "success");
         },
       });
-      await epub.load(new File([buffer], fileName, { type: "application/epub+zip" }));
+      await epub.load(new File([buffer], fileName, { type: mimeForBookFileName(fileName) }));
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      await refreshInspectorAfterQuoteSave(state.slug);
     } else {
-      throw new Error("Nepodporovaný formát — použijte PDF nebo EPUB.");
+      throw new Error("Nepodporovaný formát — použijte PDF, EPUB nebo MOBI/AZW.");
     }
 
-    state.route = "reader";
-    setRoute("reader");
-    state.inspectorOpen = true;
-    syncReadingChrome();
+    enterReaderMode();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);
       toast(msg, "error");
       console.error(err);
+      throw err;
     }
   };
 
   const reopenRecentBook = async (entry: RecentBook) => {
-    if (!state.libraryRoot) await pickLibrary();
+    if (!(await requireLibraryConfigured())) return;
     let storedPath = entry.filePath;
     const card = await loadBookCard(state.libraryRoot, entry.slug);
     if (card?.path) storedPath = card.path;
@@ -908,7 +1010,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pushRecent({ ...entry, filePath: storedPath });
       buffer = newBuf;
     }
-    const fileName = storedPath.replace(/^.*[/\\]/, "") || `${entry.slug}.${entry.kind === "pdf" ? "pdf" : "epub"}`;
+    const fileName =
+      storedPath.replace(/^.*[/\\]/, "") ||
+      `${entry.slug}.${entry.kind === "pdf" ? "pdf" : entry.kind === "mobi" ? "mobi" : "epub"}`;
     await openBookFromBuffer(buffer, fileName, {
       slug: entry.slug,
       storedPath,
@@ -922,7 +1026,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const openBookFromAbsolutePath = async (libraryRoot: string, filePath: string) => {
-    await setLibraryRoot(libraryRoot);
+    if (!libraryRoot && !(await requireLibraryConfigured())) return;
+    if (isTauri()) {
+      const parent = filePath.replace(/[/\\][^/\\]+$/, "");
+      if (parent) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("allow_library_path", { path: parent });
+      }
+    }
+    if (libraryRoot) await setLibraryRoot(libraryRoot);
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const bytes = await readFile(filePath);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -934,6 +1046,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   installSmokeTestApi({
     dropBookFromPath: async (libraryRoot, filePath) => {
+      if (!libraryRoot) {
+        await openBookFromAbsolutePath("", filePath);
+        return;
+      }
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("smoke_drop_book", { libraryRoot, filePath });
     },
@@ -952,48 +1068,91 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         draft.anchor,
       );
       pdf.paintHighlight(draft.layer, draft.range);
-      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
-    epubReaderReady: () => {
-      try {
-        return !!epub?.quoteDraftFromFirstText() || !!epub?.getFixturePlainText();
-      } catch {
-        return false;
+    epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
+    epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
+    ensureEpubReaderReady: async () => {
+      if (!epub) throw new Error("EPUB reader not active");
+      await epub.ensureReadableFallback();
+      return epub.visibleDomTextLength();
+    },
+    getLibraryRoot: () => state.libraryRoot,
+    getFolderPickerInvocationCount,
+    resetFirstRunClientState: async () => {
+      state.libraryRoot = "";
+      state.book = null;
+      state.slug = "";
+      recentBooksCache = [];
+      localStorage.removeItem("marginalia.libraryRoot");
+      localStorage.removeItem("marginalia.recentBooks");
+      resetFolderPickerInvocationCount();
+      setLibraryPath("Žádná knihovna");
+      showLibrarySetupModal({
+        onChooseFolder: () => void pickLibrary(false),
+        onCreateFolder: () => void createNewLibraryFolder(),
+      });
+      pdf?.destroy();
+      epub?.destroy();
+      pdf = null;
+      epub = null;
+      if (state.route === "library") await renderLibrary();
+    },
+    adoptFixtureLibrary: async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const lib = (await invoke("smoke_adopt_fixture_library")) as string;
+      await setLibraryRoot(lib);
+      await openLibraryIndex(lib);
+      setLibraryPath(lib, lib);
+      return lib;
+    },
+    openBookAtPath: async (filePath: string, libraryRoot = "") => {
+      const root = libraryRoot || state.libraryRoot;
+      if (!root) {
+        throw new Error("open blocked before library setup");
+      }
+      await openBookFromAbsolutePath(libraryRoot, filePath);
+      if (state.route !== "reader" || !state.book) {
+        throw new Error(`openBookAtPath failed for ${filePath}`);
       }
     },
+    finishLibrarySetup: async (libraryRoot: string) => {
+      await finishLibrarySetup(libraryRoot);
+      return (await listBooksForLibrary()).length;
+    },
+    rescanBooksFromFolder: async () => {
+      if (!(await requireLibraryConfigured())) throw new Error("No library root");
+      const imported = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+      if (state.route === "library") await renderLibrary();
+      return { imported, total: (await listBooksForLibrary()).length };
+    },
+    countScannedBookCards: async () => (await listBooksForLibrary()).length,
+    ensureInspectorOpen: () => {
+      if (state.route !== "reader") throw new Error("ensureInspectorOpen requires reader route");
+      state.inspectorOpen = true;
+      syncReadingChrome();
+    },
+    isSetupModalVisible: () => isLibrarySetupModalVisible(),
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
         throw new Error("EPUB reader or book context missing");
       }
       let liveDraft = epub.quoteDraftFromFirstText();
-      for (let i = 0; !liveDraft && i < 24; i++) {
+      for (let i = 0; !liveDraft && i < 40; i++) {
         await new Promise((r) => setTimeout(r, 500));
         liveDraft = epub.quoteDraftFromFirstText();
       }
-      let draft = liveDraft ?? epub.quoteDraftFromFixtureText();
-      if (!draft) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
-        if (smokeOn) {
-          const text = (await invoke("smoke_epub_fixture_paragraph")) as string;
-          const snippet = text.slice(0, Math.min(text.length, 120));
-          const cfi = "/0/0";
-          const anchor = anchorFromEpubSelection(text, 0, snippet.length, cfi);
-          draft = { text: snippet, cfi, anchor, range: null };
-        }
-      }
-      if (!draft) throw new Error("No selectable EPUB text");
+      const draft = liveDraft ?? epub.quoteDraftFromFixtureText();
+      if (!draft) throw new Error("No selectable EPUB text (DOM not ready)");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
       if (draft.range) epub.paintHighlight(draft.range);
-      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs.map((d) => ({ quoteText: d.quoteText, page: d.meta.page })));
+      await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
     verifyDialogPlugin: smokeVerifyDialogPlugin,
     seedWikilinkBacklink: async () => {
-      if (!state.libraryRoot) throw new Error("No library root");
+      if (!(await requireLibraryConfigured())) throw new Error("No library root");
       const targetTitle = "Smoke cíl";
       const target = createBlankNote(targetTitle);
       await saveNote(state.libraryRoot, target);
@@ -1069,15 +1228,22 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     libraryRoot = (await loadDesktopLibraryRoot()) || libraryRoot;
     const { invoke } = await import("@tauri-apps/api/core");
     const smokeOn = (await invoke("smoke_is_enabled")) as boolean;
-    if (!libraryRoot && smokeOn) {
+    const deferFixture = smokeOn && (await invoke("smoke_defer_fixture_library")) === true;
+    if (!libraryRoot && smokeOn && !deferFixture) {
       const fixtures = (await invoke("smoke_fixture_paths")) as { library_root: string | null };
       if (fixtures.library_root) libraryRoot = fixtures.library_root;
     }
   }
   if (libraryRoot) {
     await setLibraryRoot(libraryRoot);
+    await ensureLibrarySubdirs(libraryRoot);
     void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
+    void syncAllBooksFromLibraryFolder(libraryRoot, pushRecentFromImport).then(() => {
+      if (state.route === "library") void renderLibrary();
+    });
+  } else {
+    openLibrarySetupModal();
   }
 
   void reindexLinks().then(() => setRoute("library"));
