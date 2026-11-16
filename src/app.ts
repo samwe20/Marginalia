@@ -64,7 +64,7 @@ import {
 } from "./lib/demo-data";
 import { listNotes } from "./lib/notes";
 import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
-import { escapeAttr, escapeHtml, formatDateCs } from "./lib/html";
+import { escapeAttr, escapeHtml } from "./lib/html";
 import type { QuoteDocument } from "./lib/quote-markdown";
 import { icons } from "./ui/icons";
 import {
@@ -1018,8 +1018,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
     if (fileKind === "pdf") {
       pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
-      epub?.destroy();
-      epub = null;
       mountReaderChrome("pdf", state.book.title);
       enterReaderMode();
       const pdfRoot = stageMain.querySelector("#pdf-root") as HTMLElement;
@@ -1043,8 +1041,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       await refreshInspectorAfterQuoteSave(state.slug);
     } else if (fileKind === "epub" || fileKind === "mobi") {
       pushRecent({ ...state.book, slug: state.slug, kind: fileKind, updated: now });
-      pdf?.destroy();
-      pdf = null;
       mountReaderChrome(fileKind, state.book.title);
       enterReaderMode();
       const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
