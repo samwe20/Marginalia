@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { prepareWebLibrary } from "./helpers";
 
 const fixtures = join(process.cwd(), "tests", "fixtures");
 
@@ -18,8 +19,7 @@ test.describe("highlight persistence", () => {
   });
 
   test("EPUB opens in app without error", async ({ page }) => {
-    await page.goto("/");
-    await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+    await prepareWebLibrary(page);
     await page.locator("#file-open").setInputFiles(join(fixtures, "sample.epub"));
     await expect(page.locator("#epub-root foliate-view")).toHaveCount(1, { timeout: 60_000 });
     const status = await page.locator("#status").textContent();

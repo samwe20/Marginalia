@@ -59,6 +59,40 @@ export async function ensureBookCard(libraryRoot: string, book: BookMeta): Promi
   return slug;
 }
 
+export async function updateQuoteComment(
+  libraryRoot: string,
+  bookSlug: string,
+  quoteId: string,
+  comment: string,
+): Promise<QuoteDocument | null> {
+  const dir = `${libraryRoot}/citace/${bookSlug}`;
+  const path = `${dir}/${quoteId}.md`;
+  let raw: string;
+  if (isTauri()) {
+    const { readTextFile, writeTextFile } = await import("@tauri-apps/plugin-fs");
+    try {
+      raw = await readTextFile(path);
+    } catch {
+      return null;
+    }
+    const doc = parseQuoteMarkdown(raw);
+    doc.comment = comment.trim();
+    doc.meta.updated = new Date().toISOString();
+    const md = formatQuoteMarkdown(doc);
+    await writeTextFile(path, md);
+    await indexUpsert(doc, path);
+    return doc;
+  }
+  const key = `marginalia:${path}`;
+  raw = localStorage.getItem(key) ?? "";
+  if (!raw) return null;
+  const doc = parseQuoteMarkdown(raw);
+  doc.comment = comment.trim();
+  doc.meta.updated = new Date().toISOString();
+  localStorage.setItem(key, formatQuoteMarkdown(doc));
+  return doc;
+}
+
 export async function saveQuote(
   libraryRoot: string,
   book: BookMeta,
@@ -103,7 +137,11 @@ export async function loadAllQuotesFromLibrary(libraryRoot: string): Promise<Quo
       const slugs = await readDir(root);
       for (const s of slugs) {
         if (!s.isDirectory || !s.name) continue;
-        docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        try {
+          docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        } catch {
+          /* skip unreadable quote dirs */
+        }
       }
     } catch {
       return [];
@@ -128,8 +166,12 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
       const entries = await readDir(dir);
       for (const e of entries) {
         if (e.isFile && e.name?.endsWith(".md")) {
-          const text = await readTextFile(`${dir}/${e.name}`);
-          docs.push(parseQuoteMarkdown(text));
+          try {
+            const text = await readTextFile(`${dir}/${e.name}`);
+            docs.push(parseQuoteMarkdown(text));
+          } catch {
+            /* skip corrupt quote files */
+          }
         }
       }
     } catch {
@@ -143,7 +185,7 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
       docs.push(parseQuoteMarkdown(localStorage.getItem(key)!));
     }
   }
-  return docs;
+  return docs.filter((d) => d.meta.book_slug === slug);
 }
 
 export async function openLibraryIndex(libraryRoot?: string): Promise<void> {
