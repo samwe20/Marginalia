@@ -101,6 +101,14 @@ async function goLibrary() {
   await browser.pause(600);
 }
 
+async function openQuotesTab() {
+  await $('[data-route="quotes"]').click();
+  await browser.waitUntil(
+    async () => (await $(".page").getAttribute("data-quotes-ready")) === "1",
+    { timeout: 20_000, timeoutMsg: "quotes overview not ready" },
+  );
+}
+
 async function openPdfFromLibraryCard() {
   await goLibrary();
   const card = await $('.book-card[data-kind="pdf"]:not(.book-card--demo)');
@@ -260,6 +268,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         await citaceBtn.click();
         await browser.pause(400);
       }
+      if ((await $("#app").getAttribute("class"))?.includes("backlinks-hidden")) {
+        await $("#btn-backlinks").click();
+        await browser.pause(300);
+      }
       const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
         "createEpubQuoteFromSelection",
       );
@@ -277,12 +289,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         },
         { timeout: 15_000, timeoutMsg: "inspector quote card after EPUB highlight" },
       );
-      await $('[data-route="quotes"]').click();
-      await browser.pause(1200);
+      await openQuotesTab();
       await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
       await openEpubFromLibraryCard();
-      await $('[data-route="quotes"]').click();
-      await browser.pause(800);
+      await openQuotesTab();
       await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();
       record("S15", "EPUB quote on disk + Citace + restore", true, created.quoteId);
     } catch (e) {
@@ -469,8 +479,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
       const panelText = await $("#inspector-body .quote-card__text").getText();
       if (!panelText.includes(created.text.slice(0, 8))) throw new Error("inspector quote mismatch");
-      await $('[data-route="quotes"]').click();
-      await browser.pause(1200);
+      await openQuotesTab();
       const citace = await $(`[data-user-quote="${created.quoteId}"]`);
       await expect(citace).toBeDisplayed();
       await openPdfFromLibraryCard();

@@ -305,6 +305,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     return p || "—";
   };
 
+  const refreshInspectorAfterQuoteSave = async (slug: string) => {
+    const docs = await loadQuotesForBook(state.libraryRoot, slug);
+    renderInspectorQuotes(docs);
+    state.inspectorOpen = true;
+    syncReadingChrome();
+  };
+
   const renderInspectorQuotes = (docs: QuoteDocument[]) => {
     if (!docs.length) {
       inspectorBody.innerHTML = `<p class="muted">Zatím žádné citace. Zapněte zvýrazňování a označte text v knize.</p>`;
@@ -346,7 +353,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
     setContextTitle(label);
     if (route === "library") void renderLibrary();
-    if (route === "quotes") void renderQuotesOverview();
+    if (route === "quotes") {
+      stageMain.innerHTML = `<div class="page" data-quotes-loading="1"><p class="muted">Načítám citace…</p></div>`;
+      void renderQuotesOverview();
+    }
     if (route === "notes") {
       void (async () => {
         if (!(await requireLibraryConfigured())) return;
@@ -486,17 +496,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const renderQuotesOverview = async () => {
     const userQuotes = state.libraryRoot ? await loadAllQuotesFromLibrary(state.libraryRoot) : [];
-    if (!isDemoEnabled() && !userQuotes.length) {
+    if (userQuotes.length) {
       stageMain.innerHTML = `
-        <div class="page">
-          <h1>Databáze citací</h1>
-          <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
-        </div>`;
-      return;
-    }
-    if (userQuotes.length && !isDemoEnabled()) {
-      stageMain.innerHTML = `
-        <div class="page page--wide">
+        <div class="page page--wide" data-quotes-ready="1">
           <h1>Databáze citací</h1>
           <p class="muted results-count">${userQuotes.length} citací z knihovny</p>
           <ul class="quote-list user-quote-list">${userQuotes
@@ -505,6 +507,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 `<li class="quote-card" data-user-quote="${escapeAttr(d.meta.id)}"><div class="quote-card__page">${escapeHtml(d.meta.page)}</div><div class="quote-card__text">${escapeHtml(d.quoteText)}</div></li>`,
             )
             .join("")}</ul>
+        </div>`;
+      return;
+    }
+    if (!isDemoEnabled()) {
+      stageMain.innerHTML = `
+        <div class="page" data-quotes-ready="1">
+          <h1>Databáze citací</h1>
+          <p class="muted">Zatím nemáte načtená ukázková data. V Nastavení zvolte <strong>Načíst ukázková data</strong>, nebo vytvářejte citace při čtení vlastních knih.</p>
         </div>`;
       return;
     }
@@ -519,7 +529,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const bookMap = new Map(books.map((b) => [b.slug, b]));
     stageMain.innerHTML = `
-      <div class="page page--wide">
+      <div class="page page--wide" data-quotes-ready="1">
         <h1>Databáze citací</h1>
         <p class="muted">Ukázkové citace a poznámky — filtrujte podle knihy, štítku nebo textu.</p>
         <div class="filters-bar">
@@ -928,8 +938,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         getMode: () => state.mode,
         onHighlight: async ({ text, pageIndex, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
-          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs);
+          await refreshInspectorAfterQuoteSave(state.slug);
           toast("Citace uložena", "success");
         },
       });
@@ -940,7 +949,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pdfPageCounterDetach = attachPdfPageCounter(surface, pdfRoot, counter, pdf.getPageCount());
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
-      renderInspectorQuotes(docs);
+      await refreshInspectorAfterQuoteSave(state.slug);
     } else if (fileKind === "epub" || fileKind === "mobi") {
       pushRecent({ ...state.book, slug: state.slug, kind: fileKind, updated: now });
       pdf?.destroy();
@@ -953,15 +962,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         getMode: () => state.mode,
         onHighlight: async ({ text, cfi, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
-          const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-          renderInspectorQuotes(docs);
+          await refreshInspectorAfterQuoteSave(state.slug);
           toast("Citace uložena", "success");
         },
       });
       await epub.load(new File([buffer], fileName, { type: mimeForBookFileName(fileName) }));
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
-      renderInspectorQuotes(docs);
+      await refreshInspectorAfterQuoteSave(state.slug);
     } else {
       throw new Error("Nepodporovaný formát — použijte PDF, EPUB nebo MOBI/AZW.");
     }
@@ -1060,8 +1068,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         draft.anchor,
       );
       pdf.paintHighlight(draft.layer, draft.range);
-      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs);
+      await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
     epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
@@ -1140,8 +1147,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (!draft) throw new Error("No selectable EPUB text (DOM not ready)");
       const saved = await saveQuote(state.libraryRoot, state.book, state.slug, draft.text, draft.cfi, draft.anchor);
       if (draft.range) epub.paintHighlight(draft.range);
-      const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
-      renderInspectorQuotes(docs);
+      await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
     verifyDialogPlugin: smokeVerifyDialogPlugin,
