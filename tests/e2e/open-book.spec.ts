@@ -1,16 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { prepareWebLibrary } from "./helpers";
 
 const fixtures = join(process.cwd(), "tests", "fixtures");
 
 test.describe("open book (web build)", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
-    await page.reload();
-    await page.locator('.nav-item[data-route="library"]').click();
-    await page.waitForSelector('[data-testid="btn-rescan-books"]');
+    await prepareWebLibrary(page);
   });
 
   test("PDF má interaktivní textLayer po otevření", async ({ page }) => {

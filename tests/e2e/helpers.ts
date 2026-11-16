@@ -1,9 +1,23 @@
 import type { Page } from "@playwright/test";
 
 export async function prepareWebLibrary(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.setItem("marginalia.libraryRoot", "/Marginalia");
+  });
   await page.goto("/");
   await page.waitForSelector(".sidebar");
-  await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+  await page.waitForFunction(() => {
+    const el = document.getElementById("library-setup-modal");
+    return !el || el.hasAttribute("hidden");
+  });
+  const modal = page.locator("#library-setup-modal:not([hidden])");
+  if (await modal.isVisible()) {
+    await page.locator("#setup-create-folder").click();
+    await page.waitForFunction(() => {
+      const el = document.getElementById("library-setup-modal");
+      return !el || el.hasAttribute("hidden");
+    });
+  }
 }
 
 export async function enableDemoData(page: Page): Promise<void> {

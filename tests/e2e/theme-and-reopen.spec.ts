@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
+import { prepareWebLibrary } from "./helpers";
 
 test.describe("theme preference", () => {
   test("světlý motiv v Nastavení", async ({ page }) => {
@@ -17,9 +18,7 @@ test.describe("theme preference", () => {
 
 test.describe("reopen recent book", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".sidebar");
-    await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+    await prepareWebLibrary(page);
   });
 
   test("kniha zůstane v knihovně po zavření readeru", async ({ page }) => {

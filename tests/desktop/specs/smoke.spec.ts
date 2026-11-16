@@ -268,6 +268,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
     try {
+      await openEpubFromLibraryCard();
+      const appClass = await $("#app").getAttribute("class");
+      if (appClass?.includes("backlinks-hidden")) {
+        await $("#btn-backlinks").click();
+        await browser.pause(400);
+      }
       const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(
         "createEpubQuoteFromSelection",
       );
@@ -278,7 +284,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (!files.includes(`${created.quoteId}.md`)) {
         throw new Error(`quote .md missing on disk: ${files.join(",")}`);
       }
-      await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      await browser.waitUntil(
+        async () => {
+          const el = await $("#inspector-body .quote-card__text");
+          return (await el.isExisting()) && (await el.isDisplayed());
+        },
+        { timeout: 15_000, timeoutMsg: "inspector quote card after EPUB highlight" },
+      );
       await $('[data-route="quotes"]').click();
       await browser.pause(1200);
       await expect($(`[data-user-quote="${created.quoteId}"]`)).toBeDisplayed();

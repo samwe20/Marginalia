@@ -13,4 +13,5 @@ commands.allow = [
   "smoke_reset_first_run",
   "smoke_expected_documents_library",
   "smoke_adopt_fixture_library",
+  "smoke_stage_file_in_library",
 ]
