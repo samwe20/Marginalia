@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
-import { prepareWebLibrary } from "./helpers";
+import { expectPdfReaderTextReady, prepareWebLibrary } from "./helpers";
 
 test.describe("theme preference", () => {
   test("světlý motiv v Nastavení", async ({ page }) => {
@@ -22,10 +22,10 @@ test.describe("reopen recent book", () => {
 
   test("kniha zůstane v knihovně po zavření readeru", async ({ page }) => {
     await page.locator("#file-open").setInputFiles(join(process.cwd(), "tests", "fixtures", "sample.pdf"));
-    await expect(page.locator("#pdf-root .textLayer")).toBeVisible({ timeout: 60_000 });
+    await expectPdfReaderTextReady(page);
     await page.locator("#btn-back-library").click();
     await expect(page.locator('.book-card:not(.book-card--demo)')).toHaveCount(1, { timeout: 15_000 });
     await page.locator(".book-card:not(.book-card--demo)").click();
-    await expect(page.locator("#pdf-root .textLayer")).toBeVisible({ timeout: 60_000 });
+    await expectPdfReaderTextReady(page);
   });
 });
