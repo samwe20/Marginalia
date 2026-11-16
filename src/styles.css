@@ -1059,6 +1059,74 @@ body.setup-modal-open .workspace {
   border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
 }
 
+.toolbar-left--context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.65rem 1rem;
+  min-width: 0;
+}
+
+.reader-author-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  max-width: min(42vw, 22rem);
+}
+
+.reader-author-label {
+  flex-shrink: 0;
+}
+
+.reader-author-input {
+  min-width: 10rem;
+  max-width: 18rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font: inherit;
+}
+
+.quote-card__note-field {
+  display: block;
+  margin-top: 0.55rem;
+}
+
+.quote-card__comment-input {
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  resize: vertical;
+}
+
+.quote-card__comment--readonly {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.inspector-quote-list,
+.user-quote-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.quotes-filter {
+  margin: 0.75rem 0 0.35rem;
+}
+
 /* Highlights */
 mark.quote-highlight,
 .quote-highlight {

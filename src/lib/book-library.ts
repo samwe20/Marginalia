@@ -116,6 +116,29 @@ export async function loadBookCard(libraryRoot: string, slug: string): Promise<P
   return text ? parseBookCardYaml(text) : null;
 }
 
+export async function updateBookCardAuthor(
+  libraryRoot: string,
+  slug: string,
+  author: string,
+): Promise<void> {
+  const card = (await loadBookCard(libraryRoot, slug)) ?? {
+    title: slug,
+    author: "",
+    sha256: "",
+    path: "",
+    updated: "",
+  };
+  const now = new Date().toISOString();
+  const body = `---\n\ntitle: ${JSON.stringify(card.title)}\nauthor: ${JSON.stringify(author.trim())}\nsha256: ${card.sha256}\npath: ${JSON.stringify(card.path)}\nupdated: ${now}\n\n`;
+  const path = bookCardPath(libraryRoot, slug);
+  if (isTauri()) {
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+    await writeTextFile(path, body);
+    return;
+  }
+  localStorage.setItem(`marginalia:${path}`, body);
+}
+
 export async function updateBookCardPath(libraryRoot: string, slug: string, newPath: string): Promise<void> {
   const card = await loadBookCard(libraryRoot, slug);
   if (!card) return;
@@ -168,7 +191,7 @@ export async function readBookBytes(
     const bytes = await readFile(storedPath);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
-  const ext = storedPath.match(/\.(pdf|epub)$/i)?.[0]?.toLowerCase() ?? ".pdf";
+  const ext = storedPath.match(/\.(pdf|epub|mobi|azw3?)$/i)?.[0]?.toLowerCase() ?? ".pdf";
   const b64 = localStorage.getItem(binaryStorageKey(slug, ext));
   if (!b64) return null;
   const bin = atob(b64);

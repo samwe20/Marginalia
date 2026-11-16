@@ -11,6 +11,7 @@ export interface EpubReaderOptions {
     cfi: string;
     anchor: ReturnType<typeof anchorFromEpubSelection>;
   }) => void;
+  onSelectionPending?: () => void;
 }
 
 type FoliateView = HTMLElement & {
@@ -30,17 +31,24 @@ type FoliateView = HTMLElement & {
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
-  private detach: (() => void) | null = null;
+  private highlight: import("../lib/highlighter").HighlightHandle | null = null;
   private readyTimer: number | null = null;
   private docText = "";
   private fixturePlainText: string | null = null;
 
   constructor(private opts: EpubReaderOptions) {}
 
+  commitPendingHighlight(): boolean {
+    return this.highlight?.commitPending() ?? false;
+  }
+
   async load(file: Blob | File): Promise<void> {
     this.destroy();
     const { container } = this.opts;
     container.innerHTML = "";
+    const isMobi =
+      (file instanceof File && /\.(mobi|azw3?)$/i.test(file.name)) ||
+      (typeof file.type === "string" && /mobi|amazon/i.test(file.type));
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
@@ -86,11 +94,18 @@ export class EpubReader {
       this.refreshDocText();
       this.syncTextReadyFlag();
     });
-    await this.waitForReadableContent();
+    await this.waitForReadableContent(isMobi);
+    if (isMobi && this.visibleDomTextLength() <= 3) {
+      await this.captureFixturePlainText(
+        book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
+      );
+      this.mountPlainTextFallbackIfNeeded();
+    }
     this.mountPlainTextFallbackIfNeeded();
     const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
 
-    this.detach = attachHighlighter(
+    this.highlight?.detach();
+    this.highlight = attachHighlighter(
       highlightRoot,
       (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
       (range) => {
@@ -103,6 +118,7 @@ export class EpubReader {
         this.paintHighlight(range);
       },
       this.opts.getMode,
+      () => this.opts.onSelectionPending?.(),
     );
 
     view.addEventListener("relayout", () => {
@@ -113,7 +129,7 @@ export class EpubReader {
     this.beginTextReadyWatch();
   }
 
-  private waitForReadableContent(): Promise<void> {
+  private waitForReadableContent(aggressiveFallback = false): Promise<void> {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
@@ -125,7 +141,8 @@ export class EpubReader {
           return;
         }
         tries += 1;
-        if (tries >= 60) this.mountPlainTextFallbackIfNeeded();
+        const fallbackAfter = aggressiveFallback ? 15 : 60;
+        if (tries >= fallbackAfter) this.mountPlainTextFallbackIfNeeded();
         if (tries >= 180) {
           this.mountPlainTextFallbackIfNeeded();
           this.syncTextReadyFlag();
@@ -319,7 +336,7 @@ export class EpubReader {
       const sections = book.sections ?? [];
       let best = "";
       for (const section of sections) {
-        if (section.linear === "no" || !section.createDocument) continue;
+        if (section.linear === "no" || !section?.createDocument) continue;
         try {
           const doc = await section.createDocument();
           const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
@@ -483,8 +500,8 @@ export class EpubReader {
   destroy(): void {
     if (this.readyTimer) window.clearTimeout(this.readyTimer);
     this.readyTimer = null;
-    this.detach?.();
-    this.detach = null;
+    this.highlight?.detach();
+    this.highlight = null;
     this.view?.remove();
     this.view = null;
     this.contentRoot = null;

@@ -12,12 +12,13 @@ export interface PdfReaderOptions {
   getMode: () => HighlightMode;
   onHighlight: (quote: { text: string; pageIndex: number; anchor: ReturnType<typeof anchorFromPdfSelection> }) => void;
   onPageLabel?: (pageIndex: number) => string;
+  onSelectionPending?: () => void;
 }
 
 export class PdfReader {
   private pdf: pdfjs.PDFDocumentProxy | null = null;
   private pageRoots = new Map<number, HTMLElement>();
-  private detach: (() => void) | null = null;
+  private highlight: import("../lib/highlighter").HighlightHandle | null = null;
 
   constructor(private opts: PdfReaderOptions) {}
 
@@ -75,9 +76,13 @@ export class PdfReader {
     }
   }
 
+  commitPendingHighlight(): boolean {
+    return this.highlight?.commitPending() ?? false;
+  }
+
   private wireHighlighter(): void {
-    this.detach?.();
-    this.detach = attachHighlighter(
+    this.highlight?.detach();
+    this.highlight = attachHighlighter(
       this.opts.container,
       (x, y) => {
         const el = document.elementFromPoint(x, y);
@@ -100,6 +105,7 @@ export class PdfReader {
         this.paintHighlight(layer, range);
       },
       this.opts.getMode,
+      () => this.opts.onSelectionPending?.(),
     );
   }
 
@@ -190,8 +196,8 @@ export class PdfReader {
   }
 
   destroy(): void {
-    this.detach?.();
-    this.detach = null;
+    this.highlight?.detach();
+    this.highlight = null;
     this.pageRoots.clear();
     this.pdf?.destroy();
     this.pdf = null;

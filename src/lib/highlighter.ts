@@ -6,18 +6,45 @@ export interface PointerStroke {
   pointerType: string;
 }
 
+export type HighlightHandle = {
+  detach: () => void;
+  /** Uloží označený text (volat po klávese H). */
+  commitPending: () => boolean;
+  clearPending: () => void;
+  hasPending: () => boolean;
+};
+
 export function attachHighlighter(
   root: HTMLElement,
   getRangeFromPoint: (x: number, y: number) => Range | null,
   onComplete: (range: Range, stroke: PointerStroke) => void,
   mode: () => HighlightMode,
-): () => void {
+  onSelectionPending?: () => void,
+): HighlightHandle {
   let anchorRange: Range | null = null;
   let activePointer: number | null = null;
+  let pendingRange: Range | null = null;
+
+  const clearPending = () => {
+    pendingRange = null;
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+  };
+
+  const commitPending = (): boolean => {
+    if (mode() !== "highlight") return false;
+    const range = pendingRange;
+    if (!range || range.collapsed) return false;
+    onComplete(range, { pointerType: "keyboard" });
+    pendingRange = null;
+    window.getSelection()?.removeAllRanges();
+    return true;
+  };
 
   const onPointerDown = (ev: PointerEvent) => {
     if (mode() !== "highlight") return;
     if (ev.button !== 0) return;
+    pendingRange = null;
     const range = getRangeFromPoint(ev.clientX, ev.clientY);
     if (!range) return;
     activePointer = ev.pointerId;
@@ -49,9 +76,12 @@ export function attachHighlighter(
   const onPointerUp = (ev: PointerEvent) => {
     if (activePointer !== ev.pointerId) return;
     const sel = window.getSelection();
-    const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    const range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
     if (range && !range.collapsed) {
-      onComplete(range, { pointerType: ev.pointerType });
+      pendingRange = range;
+      onSelectionPending?.();
+    } else {
+      clearPending();
     }
     activePointer = null;
     anchorRange = null;
@@ -67,11 +97,19 @@ export function attachHighlighter(
   root.addEventListener("pointerup", onPointerUp);
   root.addEventListener("pointercancel", onPointerUp);
 
-  return () => {
+  const detach = () => {
     root.removeEventListener("pointerdown", onPointerDown);
     root.removeEventListener("pointermove", onPointerMove);
     root.removeEventListener("pointerup", onPointerUp);
     root.removeEventListener("pointercancel", onPointerUp);
+    clearPending();
+  };
+
+  return {
+    detach,
+    commitPending,
+    clearPending,
+    hasPending: () => Boolean(pendingRange && !pendingRange.collapsed),
   };
 }
 
