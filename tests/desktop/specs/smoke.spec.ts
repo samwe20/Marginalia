@@ -249,9 +249,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S15 EPUB highlight → .md + Citace + panel + reopen", async () => {
     try {
       await openEpubFromLibraryCard();
+      await browser.waitUntil(
+        async () => (await $("#btn-backlinks").getAttribute("hidden")) == null,
+        { timeout: 20_000, timeoutMsg: "reader mode: Citace toolbar control not visible" },
+      );
       const appClass = await $("#app").getAttribute("class");
       if (appClass?.includes("backlinks-hidden")) {
-        await $("#btn-backlinks").click();
+        await callSmokeApi("ensureInspectorOpen");
         await browser.pause(400);
       }
       const created = await callSmokeApi<{ quoteId: string; text: string; slug: string }>(

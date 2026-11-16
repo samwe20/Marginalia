@@ -9,6 +9,7 @@ export type SmokeTestApi = {
   epubReaderReady: () => boolean;
   epubVisibleTextLength: () => number;
   ensureEpubReaderReady: () => Promise<number>;
+  ensureInspectorOpen: () => void;
   verifyDialogPlugin: () => Promise<{ ok: boolean; detail: string }>;
   seedWikilinkBacklink: () => Promise<{ targetTitle: string; backlinkCount: number }>;
   currentBookSlug: () => string | null;

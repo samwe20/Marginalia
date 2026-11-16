@@ -1115,6 +1115,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return { imported, total: (await listBooksForLibrary()).length };
     },
     countScannedBookCards: async () => (await listBooksForLibrary()).length,
+    ensureInspectorOpen: () => {
+      if (state.route !== "reader") throw new Error("ensureInspectorOpen requires reader route");
+      state.inspectorOpen = true;
+      syncReadingChrome();
+    },
     isSetupModalVisible: () => isLibrarySetupModalVisible(),
     createEpubQuoteFromSelection: async () => {
       if (!epub || !state.book || !state.slug || !state.libraryRoot) {
