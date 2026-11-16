@@ -84,10 +84,11 @@ function binaryStorageKey(slug: string, ext: string): string {
 }
 
 export function parseBookCardYaml(content: string): ParsedBookCard | null {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
+  const closed = content.match(/^---\n([\s\S]*?)\n---/);
+  const open = closed ?? content.match(/^---\n([\s\S]*)$/);
+  if (!open) return null;
   const pick = (key: string) => {
-    const line = m[1].split("\n").find((l) => l.startsWith(`${key}:`));
+    const line = open[1].split("\n").find((l) => l.startsWith(`${key}:`));
     if (!line) return "";
     const raw = line.slice(key.length + 1).trim();
     try {

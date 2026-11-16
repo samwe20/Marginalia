@@ -96,23 +96,48 @@ async function pointerSelectPdfText(): Promise<void> {
 
 async function pointerSelectEpubText(): Promise<void> {
   const rect = (await browser.execute(function selectEpubTextRect() {
-    const host = document.querySelector("#epub-root");
-    if (!host) return null;
-    let el = host.querySelector(".epub-fallback-text p") || host.querySelector("p");
-    if (!el) {
-      const view = host.querySelector("foliate-view");
-      const shadow = view && view.shadowRoot;
-      if (shadow) el = shadow.querySelector(".epub-fallback-text p") || shadow.querySelector("p");
-    }
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    if (r.width < 8) return null;
-    return {
-      x: Math.floor(r.left + 6),
-      y: Math.floor(r.top + r.height / 2),
-      x2: Math.floor(r.right - 6),
-      y2: Math.floor(r.top + r.height / 2),
+    const roots = [];
+    const visit = function visitRoot(root) {
+      if (!root) return;
+      roots.push(root);
+      const owned = root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (let i = 0; i < owned.length; i++) {
+        const el = owned[i];
+        if (el.shadowRoot) visit(el.shadowRoot);
+      }
     };
+    visit(document.querySelector("#epub-root"));
+    for (let r = 0; r < roots.length; r++) {
+      const iframes = roots[r].querySelectorAll ? roots[r].querySelectorAll("iframe") : [];
+      for (let i = 0; i < iframes.length; i++) {
+        try {
+          const doc = iframes[i].contentDocument;
+          if (doc) roots.push(doc);
+        } catch {
+          /* cross-origin */
+        }
+      }
+    }
+    const candidates = [];
+    for (let r = 0; r < roots.length; r++) {
+      const nodes = roots[r].querySelectorAll ? roots[r].querySelectorAll("p, span, div") : [];
+      for (let i = 0; i < nodes.length; i++) candidates.push(nodes[i]);
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i];
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (text.length < 8) continue;
+      if (!/Marginalia|fixture|paragraph/i.test(text)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 4) continue;
+      return {
+        x: Math.floor(r.left + 6),
+        y: Math.floor(r.top + r.height / 2),
+        x2: Math.floor(r.right - 6),
+        y2: Math.floor(r.top + r.height / 2),
+      };
+    }
+    return null;
   })) as { x: number; y: number; x2: number; y2: number } | null;
   if (!rect) throw new Error("EPUB/MOBI text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
@@ -370,6 +395,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S15 EPUB: výběr bez H neukládá; H uloží citaci", async function () {
     try {
       await ensureEpubReaderOpen();
+      await callSmokeApi<number>("ensureEpubReaderReady");
       await ensureInspectorOpen();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("epub"));
       const before = (await quoteFilesOnDisk(slug)).length;
