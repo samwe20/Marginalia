@@ -140,7 +140,10 @@ export function visibleClipRect(el: Element): DOMRect {
   while (node) {
     const doc = node.ownerDocument;
     const style = doc.defaultView?.getComputedStyle(node);
-    if (style && (style.overflowX !== "visible" || style.overflowY !== "visible")) {
+    // Root/body overflow applies to the viewport (clipped by the frame element), not their own box:
+    // paginated columns lie outside the <html> box.
+    const propagatesToViewport = node === doc.documentElement || node === doc.body;
+    if (style && !propagatesToViewport && (style.overflowX !== "visible" || style.overflowY !== "visible")) {
       clip = intersect(clip, rectInTopViewport(doc, node.getBoundingClientRect()));
     }
     if (style && (style.display === "none" || style.visibility === "hidden")) {
@@ -180,6 +183,41 @@ export function visibleTextLengthIn(root: Element, cap = 4000): number {
     node = walker.nextNode() as Text | null;
   }
   return total;
+}
+
+/**
+ * Fraction (0–1) of the visible reading area's width spanned by visible text. A low value means
+ * an empty strip, e.g. a two-page spread with one page blank or a column narrower than the pane.
+ */
+export function visibleTextWidthRatio(docs: Document[]): number {
+  let best = 0;
+  for (const doc of docs) {
+    if (!doc.body) continue;
+    const clip = visibleClipRect(doc.body);
+    if (clip.width < 2 || clip.height < 2) continue;
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    const range = doc.createRange();
+    let left = Infinity;
+    let right = -Infinity;
+    let visited = 0;
+    let node = walker.nextNode() as Text | null;
+    while (node && visited < 20_000) {
+      visited += 1;
+      if ((node.textContent?.trim().length ?? 0) > 0) {
+        range.selectNodeContents(node);
+        for (const local of range.getClientRects()) {
+          const r = intersect(rectInTopViewport(doc, local), clip);
+          if (r.width >= 2 && r.height >= 2) {
+            left = Math.min(left, r.left);
+            right = Math.max(right, r.right);
+          }
+        }
+      }
+      node = walker.nextNode() as Text | null;
+    }
+    if (right > left) best = Math.max(best, (right - left) / clip.width);
+  }
+  return best;
 }
 
 export function viewportVisibleTextLength(docs: Document[]): number {

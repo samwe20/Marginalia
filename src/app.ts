@@ -50,7 +50,7 @@ import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import { loadReaderPosition, saveReaderPosition } from "./lib/reader-position";
-import { FOLIATE_FLOW, foliateNavLabels } from "./lib/reader-flow";
+import { foliateNavLabels, loadReaderFlow, saveReaderFlow, type FoliateFlow } from "./lib/reader-flow";
 import {
   DEMO_ENABLED_KEY,
   disableDemoData,
@@ -795,6 +795,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const renderSettings = () => {
     const demoOn = isDemoEnabled();
     const themePref = themeCtrl.getPreference();
+    const readerFlow = loadReaderFlow();
     stageMain.innerHTML = `
       <div class="page">
         <h1>Nastavení</h1>
@@ -810,6 +811,22 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           <button type="button" class="chip-btn theme-picker__btn${themePref === "system" ? " theme-picker__btn--on" : ""}" data-theme-pref="system">Systém</button>
           <button type="button" class="chip-btn theme-picker__btn${themePref === "light" ? " theme-picker__btn--on" : ""}" data-theme-pref="light">Světlý</button>
           <button type="button" class="chip-btn theme-picker__btn${themePref === "dark" ? " theme-picker__btn--on" : ""}" data-theme-pref="dark">Tmavý</button>
+        </div>
+        <hr class="settings-sep" />
+        <h2 class="section-title">Čtení EPUB/MOBI</h2>
+        <p class="muted">Posouvání: text plyne svisle, tlačítka přeskakují kapitoly. Stránkování: jeden sloupec na stránku, tlačítka listují.</p>
+        <div class="theme-picker" role="radiogroup" aria-label="Režim čtení">
+          ${(
+            [
+              ["scrolled", "Posouvání"],
+              ["paginated", "Stránkování"],
+            ] as Array<[FoliateFlow, string]>
+          )
+            .map(
+              ([flow, label]) =>
+                `<button type="button" role="radio" aria-checked="${readerFlow === flow}" class="chip-btn theme-picker__btn${readerFlow === flow ? " theme-picker__btn--on" : ""}" data-reader-flow="${flow}">${label}</button>`,
+            )
+            .join("")}
         </div>
         <hr class="settings-sep" />
         <h2 class="section-title">Ukázková data</h2>
@@ -830,6 +847,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           pref === "system" ? "Motiv: podle systému" : pref === "light" ? "Motiv: světlý" : "Motiv: tmavý",
           "success",
         );
+        renderSettings();
+      });
+    });
+    stageMain.querySelectorAll<HTMLElement>("[data-reader-flow]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flow = btn.dataset.readerFlow as FoliateFlow;
+        saveReaderFlow(flow);
+        toast(flow === "scrolled" ? "Čtení: posouvání" : "Čtení: stránkování", "success");
         renderSettings();
       });
     });
@@ -938,7 +963,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const mountReaderChrome = (kind: BookFileKind, title: string) => {
     const foliate = kind !== "pdf";
-    const navLabels = foliateNavLabels(FOLIATE_FLOW);
+    const navLabels = foliateNavLabels(loadReaderFlow());
     stageMain.innerHTML = `
       <div class="reader-layout">
         <div class="reader-toolbar">
@@ -1061,6 +1086,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       const positionSlug = state.slug;
       epub = new EpubReader({
         container: epubRoot,
+        flow: loadReaderFlow(),
         initialCfi: loadReaderPosition(positionSlug),
         onRelocate: (cfi) => saveReaderPosition(positionSlug, cfi),
         getMode: () => state.mode,
@@ -1212,6 +1238,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           visibleTextLength: 0,
           viewportVisibleTextLength: 0,
           sectionIndex: null,
+          flow: loadReaderFlow(),
+          textWidthRatio: 0,
           iframeElementInLightDom: false,
         };
       }

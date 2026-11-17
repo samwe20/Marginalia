@@ -1248,4 +1248,83 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   }).timeout(420_000);
+
+  it("S26 režim čtení Posouvání × Stránkování: Hamlet MOBI i EPUB v obou, volba přežije restart", async () => {
+    type Flow = "scrolled" | "paginated";
+    type Info = { mode: string; flow: Flow; viewportVisibleTextLength: number; textWidthRatio: number; sectionIndex: number | null };
+    const results: Record<string, unknown> = {};
+
+    const chooseFlow = async (flow: Flow) => {
+      await $('[data-route="settings"]').click();
+      await $(`[data-reader-flow="${flow}"]`).click();
+      await browser.pause(300);
+      const cls = (await $(`[data-reader-flow="${flow}"]`).getAttribute("class")) ?? "";
+      if (!cls.includes("theme-picker__btn--on")) throw new Error(`reading mode ${flow} not selected in Settings`);
+    };
+    const openHamlet = async () => {
+      await goLibrary();
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await waitEpubTextReady(120_000);
+    };
+    const checkReader = async (label: string, flow: Flow, minChars: number) => {
+      const visible = await waitViewportVisibleText(minChars, 60_000);
+      const info = await callSmokeApi<Info>("epubReaderRenderInfo");
+      if (info.flow !== flow) throw new Error(`${label}: reader flow ${info.flow}, expected ${flow}`);
+      if (info.mode === "iframe" && info.textWidthRatio < 0.5) {
+        throw new Error(`${label}: text spans only ${Math.round(info.textWidthRatio * 100)} % of the pane (empty strip)`);
+      }
+      const before = info.sectionIndex;
+      await $("#btn-reader-next").click();
+      await browser.pause(900);
+      const afterNext = await waitViewportVisibleText(3, 30_000);
+      const sectionAfterNext = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      if (flow === "scrolled" && info.mode === "iframe" && (sectionAfterNext ?? -1) <= (before ?? -1)) {
+        throw new Error(`${label}: "Další kapitola" did not move (${before} → ${sectionAfterNext})`);
+      }
+      results[label] = { visible, afterNext, mode: info.mode, ratio: info.textWidthRatio, before, sectionAfterNext };
+    };
+
+    try {
+      if (!mobiMultiSource) throw new Error("MARGINALIA_FIXTURE_MOBI_MULTI not set");
+      await chooseFlow("paginated");
+      await openHamlet();
+      await checkReader("hamlet-paginated", "paginated", 50);
+      await saveScreenshot("smoke-mobi-hamlet-paginated.png");
+      await openEpubFromLibraryCard();
+      await checkReader("epub-paginated", "paginated", 3);
+      await saveScreenshot("smoke-epub-paginated.png");
+
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await $('[data-route="settings"]').click();
+      await browser.pause(300);
+      const clsAfter = (await $('[data-reader-flow="paginated"]').getAttribute("class")) ?? "";
+      if (!clsAfter.includes("theme-picker__btn--on")) throw new Error("reading mode Stránkování lost after restart");
+      await saveScreenshot("smoke-reader-flow-settings-after-restart.png");
+      await openHamlet();
+      await checkReader("hamlet-paginated-after-restart", "paginated", 50);
+
+      await chooseFlow("scrolled");
+      await openHamlet();
+      await checkReader("hamlet-scrolled", "scrolled", 50);
+      await saveScreenshot("smoke-mobi-hamlet-scrolled.png");
+      await openEpubFromLibraryCard();
+      await checkReader("epub-scrolled", "scrolled", 3);
+      await saveScreenshot("smoke-epub-scrolled.png");
+
+      record("S26", "Režim čtení: oba režimy (MOBI + EPUB) + perzistence po restartu", true, JSON.stringify(results));
+    } catch (e) {
+      record("S26", "Režim čtení: oba režimy (MOBI + EPUB) + perzistence po restartu", false, `${String(e)} ${JSON.stringify(results)}`);
+      throw e;
+    }
+  }).timeout(600_000);
 });

@@ -7,6 +7,7 @@ import {
   iframeVisibleTextLength,
   viewportVisibleTextLength,
   visibleTextLengthIn,
+  visibleTextWidthRatio,
 } from "../lib/epub-iframe-geometry";
 import {
   attachHighlighter,
@@ -16,7 +17,7 @@ import {
   type HighlightMode,
 } from "../lib/highlighter";
 import { isTauri } from "../lib/runtime";
-import { FOLIATE_FLOW, type FoliateFlow } from "../lib/reader-flow";
+import { loadReaderFlow, type FoliateFlow } from "../lib/reader-flow";
 
 export interface EpubReaderOptions {
   container: HTMLElement;
@@ -242,8 +243,8 @@ export class EpubReader {
     return this.view?.renderer?.getContents?.()?.[0]?.index ?? null;
   }
 
-  private get flow(): FoliateFlow {
-    return this.opts.flow ?? FOLIATE_FLOW;
+  get flow(): FoliateFlow {
+    return this.opts.flow ?? loadReaderFlow();
   }
 
   /** Reader toolbar buttons: turn the page when paginated, jump a chapter when scrolled. */
@@ -285,6 +286,8 @@ export class EpubReader {
     visibleTextLength: number;
     viewportVisibleTextLength: number;
     sectionIndex: number | null;
+    flow: FoliateFlow;
+    textWidthRatio: number;
     iframeElementInLightDom: boolean;
   } {
     const fallback = this.opts.container.querySelector(".epub-fallback-text");
@@ -295,6 +298,8 @@ export class EpubReader {
       visibleTextLength: this.visibleDomTextLength(),
       viewportVisibleTextLength: this.viewportVisibleTextLength(),
       sectionIndex: this.currentSectionIndex(),
+      flow: this.view?.renderer?.getAttribute("flow") === "scrolled" ? "scrolled" : "paginated",
+      textWidthRatio: this.view && this.view.style.display !== "none" ? visibleTextWidthRatio(this.contentDocuments()) : 0,
       iframeElementInLightDom: Boolean(this.opts.container.querySelector("iframe")),
     };
   }

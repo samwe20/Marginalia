@@ -20,6 +20,8 @@ export type SmokeTestApi = {
     visibleTextLength: number;
     viewportVisibleTextLength: number;
     sectionIndex: number | null;
+    flow: "paginated" | "scrolled";
+    textWidthRatio: number;
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;
