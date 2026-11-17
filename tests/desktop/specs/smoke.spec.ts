@@ -191,40 +191,71 @@ async function dumpEpubPointerFailure(stage: string, extra?: Record<string, unkn
 }
 
 async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
-  const drag = (await browser.execute(function () {
-    const body = document.body;
-    if (!body) return null;
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    let textNode: Text | null = null;
-    while (walker.nextNode()) {
-      const t = walker.currentNode as Text;
-      if (t.data.replace(/\s+/g, " ").trim().length >= 5) {
-        textNode = t;
-        break;
+  await browser.execute(function () {
+    const block = document.querySelector("p, span") ?? document.body;
+    block?.scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await browser.pause(250);
+  let last: Record<string, unknown> = {};
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const plan = (await browser.execute(function () {
+      const body = document.body;
+      if (!body) return null;
+      const br = body.getBoundingClientRect();
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      let textNode: Text | null = null;
+      while (walker.nextNode()) {
+        const t = walker.currentNode as Text;
+        if (t.data.replace(/\s+/g, " ").trim().length >= 5) {
+          textNode = t;
+          break;
+        }
       }
+      if (!textNode) return null;
+      const range = document.createRange();
+      range.selectNodeContents(textNode);
+      const r = range.getClientRects()[0] ?? textNode.parentElement?.getBoundingClientRect();
+      if (!r || r.width < 4 || r.height < 2) return null;
+      const midY = Math.floor(r.top + r.height / 2);
+      return {
+        preview: textNode.data.trim().slice(0, 80),
+        viewport: {
+          x1: Math.floor(r.left + 2),
+          y1: midY,
+          x2: Math.floor(r.right - 2),
+          y2: midY,
+        },
+        bodyRel: {
+          x1: Math.floor(r.left - br.left + 2),
+          y1: Math.floor(r.top - br.top + r.height / 2),
+          x2: Math.floor(r.right - br.left - 2),
+          y2: Math.floor(r.top - br.top + r.height / 2),
+        },
+      };
+    })) as {
+      preview: string;
+      viewport: { x1: number; y1: number; x2: number; y2: number };
+      bodyRel: { x1: number; y1: number; x2: number; y2: number };
+    } | null;
+    if (!plan) throw new Error("no text node in foliate content frame");
+    const body = (await $("body")) as WebdriverIO.Element;
+    if (attempt % 2 === 0) {
+      await pointerDragOnElement(body, plan.bodyRel.x1, plan.bodyRel.y1, plan.bodyRel.x2, plan.bodyRel.y2);
+    } else {
+      await pointerDragViewport(plan.viewport.x1, plan.viewport.y1, plan.viewport.x2, plan.viewport.y2, 500);
     }
-    if (!textNode) return null;
-    const range = document.createRange();
-    range.selectNodeContents(textNode);
-    const r = range.getClientRects()[0] ?? textNode.parentElement?.getBoundingClientRect();
-    if (!r || r.width < 4 || r.height < 2) return null;
-    const y = Math.floor(r.top + r.height / 2);
-    return {
-      x1: Math.floor(r.left + 2),
-      y1: y,
-      x2: Math.floor(r.right - 2),
-      y2: y,
-      preview: textNode.data.trim().slice(0, 80),
-    };
-  })) as { x1: number; y1: number; x2: number; y2: number; preview: string } | null;
-  if (!drag) throw new Error("no text node in foliate content frame");
-  // Viewport coords inside the content iframe (not element-relative — avoids bad y2).
-  await pointerDragViewport(drag.x1, drag.y1, drag.x2, drag.y2, 420);
-  const inFrameSelection = (await browser.execute(function () {
-    const t = window.getSelection()?.toString().trim() ?? "";
-    return { length: t.length, preview: t.slice(0, 160) };
-  })) as { length: number; preview: string };
-  return { drag, inFrameSelection };
+    const inFrameSelection = (await browser.execute(function () {
+      const t = window.getSelection()?.toString().trim() ?? "";
+      return { length: t.length, preview: t.slice(0, 160) };
+    })) as { length: number; preview: string };
+    const pendingDiag = await callSmokeApi<{ highlighterPending?: boolean }>("epubSelectionDiagnostics");
+    last = { attempt, plan, inFrameSelection, highlighterPending: pendingDiag.highlighterPending === true };
+    if (inFrameSelection.length >= 3 || pendingDiag.highlighterPending) {
+      return last;
+    }
+    await browser.pause(300);
+  }
+  return last;
 }
 
 async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
@@ -251,10 +282,31 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     return dumpEpubPointerFailure("shadow-drag-error", { err, frameMeta });
   }
   const inFrame = frameDrag.inFrameSelection as { length: number; preview: string };
-  if ((inFrame?.length ?? 0) < 3) {
+  const hasPending = frameDrag.highlighterPending === true;
+  if ((inFrame?.length ?? 0) < 3 && !hasPending) {
     await browser.switchToFrame(null);
+    const rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+      "epubPointerSelectionRect",
+    );
+    if (rect) {
+      await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2, 500);
+      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      const sel = diag.selection as { selections: { length: number }[] };
+      const contentLen = sel.selections?.reduce((n, s) => n + (s.length ?? 0), 0) ?? 0;
+      if (contentLen >= 3 || diag.highlighterPending === true) {
+        return {
+          space: "foliate-top-viewport-drag",
+          stayInFrame: false,
+          frameMeta,
+          frameDrag,
+          topViewportDrag: rect,
+          selectionAfterDrag: diag,
+          renderInfo,
+        };
+      }
+    }
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-    return dumpEpubPointerFailure("after-shadow-drag-no-selection", { inFrame, diag });
+    return dumpEpubPointerFailure("after-shadow-drag-no-selection", { inFrame, frameDrag, diag });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",

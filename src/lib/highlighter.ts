@@ -111,30 +111,8 @@ export function attachHighlighter(
     }
   };
 
-  const asPointer =
-    (ev: MouseEvent): PointerEvent =>
-      ({
-        ...ev,
-        pointerId: 1,
-        pointerType: "mouse",
-        isPrimary: true,
-        pressure: 0.5,
-        buttons: ev.buttons,
-      }) as PointerEvent;
-
-  const onMouseDown = (ev: MouseEvent) => onPointerDown(asPointer(ev));
-
-  const onMouseMove = (ev: MouseEvent) => {
-    if (activePointer === null) return;
-    onPointerMove(asPointer(ev));
-  };
-
-  /** Native browser selection (WebDriver mouse drag) when custom stroke did not start. */
+  /** Mouse: defer to native selection (WebDriver / trackpad). Pen uses pointer* handlers. */
   const onMouseUp = (ev: MouseEvent) => {
-    if (activePointer !== null) {
-      onPointerUp(asPointer(ev));
-      return;
-    }
     if (mode() !== "highlight" || ev.button !== 0) return;
     const sel = getSelection();
     const range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
@@ -148,8 +126,6 @@ export function attachHighlighter(
   root.addEventListener("pointermove", onPointerMove);
   root.addEventListener("pointerup", onPointerUp);
   root.addEventListener("pointercancel", onPointerUp);
-  root.addEventListener("mousedown", onMouseDown);
-  root.addEventListener("mousemove", onMouseMove);
   root.addEventListener("mouseup", onMouseUp);
 
   const detach = () => {
@@ -157,8 +133,6 @@ export function attachHighlighter(
     root.removeEventListener("pointermove", onPointerMove);
     root.removeEventListener("pointerup", onPointerUp);
     root.removeEventListener("pointercancel", onPointerUp);
-    root.removeEventListener("mousedown", onMouseDown);
-    root.removeEventListener("mousemove", onMouseMove);
     root.removeEventListener("mouseup", onMouseUp);
     clearPending();
   };
