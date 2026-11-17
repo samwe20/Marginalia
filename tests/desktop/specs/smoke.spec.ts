@@ -1478,7 +1478,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
           const names = await listFilenames();
           const active = (await $(".notes-layout").getAttribute("data-active-note-filename")) ?? "";
           const state = (await $(".notes-layout").getAttribute("data-note-rename")) ?? "";
-          if (state === "error") throw new Error("note rename reported error in UI");
+          if (state === "error") {
+            const err = (await $(".notes-layout").getAttribute("data-note-rename-error")) ?? "";
+            throw new Error(`note rename reported error in UI: ${err}`);
+          }
           return names.includes(`${renamedTitle}.md`) || active === `${renamedTitle}.md`;
         },
         { timeout: 20_000, timeoutMsg: "renamed note not in the list" },

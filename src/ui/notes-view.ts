@@ -145,7 +145,12 @@ export async function renderNotesView(
       } catch (e) {
         console.error("Rename failed", e);
         titleInput.value = note.title;
-        stageMain.querySelector(".notes-layout")?.setAttribute("data-note-rename", "error");
+        const layout = stageMain.querySelector(".notes-layout");
+        layout?.setAttribute("data-note-rename", "error");
+        layout?.setAttribute(
+          "data-note-rename-error",
+          e instanceof Error ? e.message.slice(0, 240) : String(e).slice(0, 240),
+        );
         ctx.wiki.toast("Přejmenování selhalo", "error");
         renaming = false;
       }
