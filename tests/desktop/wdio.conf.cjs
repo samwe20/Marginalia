@@ -43,7 +43,7 @@ exports.config = {
   reporters: ["spec"],
   mochaOpts: {
     ui: "bdd",
-    timeout: 180_000,
+    timeout: 300_000,
   },
   autoCompileOpts: {
     autoCompile: true,

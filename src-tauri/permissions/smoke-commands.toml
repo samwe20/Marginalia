@@ -9,4 +9,9 @@ commands.allow = [
   "smoke_dialog_capable",
   "smoke_list_quote_files",
   "smoke_epub_fixture_paragraph",
+  "smoke_defer_fixture_library",
+  "smoke_reset_first_run",
+  "smoke_expected_documents_library",
+  "smoke_adopt_fixture_library",
+  "smoke_stage_file_in_library",
 ]

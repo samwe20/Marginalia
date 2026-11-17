@@ -1,10 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { prepareWebLibrary } from "./helpers";
 
 test.describe("search notes", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".sidebar");
-    await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
+    await prepareWebLibrary(page);
     await page.locator('.nav-item[data-route="settings"]').click();
     const load = page.locator("#btn-demo-load");
     if (await load.isEnabled()) await load.click();

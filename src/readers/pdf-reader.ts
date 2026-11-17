@@ -58,6 +58,7 @@ export class PdfReader {
 
       const textLayer = document.createElement("div");
       textLayer.className = "textLayer";
+      textLayer.dataset.pageIndex = String(pageNum - 1);
       textLayer.style.setProperty("--scale-factor", String(viewport.scale));
 
       const text = await page.getTextContent();
@@ -90,23 +91,27 @@ export class PdfReader {
         return null;
       },
       (range, _stroke) => {
-        const pageLayer = this.findPageLayer(range);
-        if (!pageLayer) return;
-        const pageIndex = Number(pageLayer.dataset.pageIndex ?? "0");
-        const { start, end, text } = rangeToOffsets(pageLayer, range);
-        const anchor = anchorFromPdfSelection(pageLayer.textContent ?? "", pageIndex, start, end, []);
+        const hit = this.findPageLayer(range);
+        if (!hit) return;
+        const { layer, pageIndex } = hit;
+        const { start, end, text } = rangeToOffsets(layer, range);
+        const anchor = anchorFromPdfSelection(layer.textContent ?? "", pageIndex, start, end, []);
         this.opts.onHighlight({ text, pageIndex, anchor });
-        this.paintHighlight(pageLayer, range);
+        this.paintHighlight(layer, range);
       },
       this.opts.getMode,
     );
   }
 
-  private findPageLayer(range: Range): HTMLElement | null {
-    for (const layer of this.pageRoots.values()) {
-      if (layer.contains(range.commonAncestorContainer)) return layer;
+  private findPageLayer(range: Range): { layer: HTMLElement; pageIndex: number } | null {
+    for (const [pageIndex, layer] of this.pageRoots) {
+      if (layer.contains(range.commonAncestorContainer)) return { layer, pageIndex };
     }
     return null;
+  }
+
+  getPageCount(): number {
+    return this.pdf?.numPages ?? 0;
   }
 
   /** Smoke / recovery: first non-empty text span on any page. */
@@ -199,4 +204,37 @@ export class PdfReader {
   static extractQuoteText(anchor: ReturnType<typeof anchorFromPdfSelection>): string {
     return getTextQuote(anchor)?.exact ?? "";
   }
+}
+
+/** Updates footer as `current/total` while scrolling the PDF surface. */
+export function attachPdfPageCounter(
+  scrollRoot: HTMLElement,
+  pdfRoot: HTMLElement,
+  counterEl: HTMLElement,
+  numPages: number,
+): () => void {
+  const format = (oneBased: number) => `${oneBased}/${numPages}`;
+  const update = () => {
+    const pages = pdfRoot.querySelectorAll<HTMLElement>(".pdf-page");
+    if (!pages.length || numPages < 1) {
+      counterEl.textContent = format(1);
+      return;
+    }
+    const mid = scrollRoot.getBoundingClientRect().top + scrollRoot.clientHeight / 2;
+    let best = 0;
+    let bestDist = Infinity;
+    pages.forEach((page, i) => {
+      const r = page.getBoundingClientRect();
+      const center = (r.top + r.bottom) / 2;
+      const d = Math.abs(center - mid);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    counterEl.textContent = format(best + 1);
+  };
+  scrollRoot.addEventListener("scroll", update, { passive: true });
+  update();
+  return () => scrollRoot.removeEventListener("scroll", update);
 }
