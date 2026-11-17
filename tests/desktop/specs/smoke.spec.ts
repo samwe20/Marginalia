@@ -539,7 +539,11 @@ async function waitViewportVisibleText(minChars: number, timeoutMs: number): Pro
 
 async function goLibrary() {
   await $('[data-route="library"]').click();
-  await browser.pause(600);
+  await browser.waitUntil(async () => (await $("[data-library-ready='1']").isExisting()), {
+    timeout: 20_000,
+    timeoutMsg: "library page not ready",
+  });
+  await browser.pause(300);
 }
 
 async function openQuotesTab() {
@@ -566,6 +570,10 @@ async function openPdfFromLibraryCard() {
 
 async function openEpubFromLibraryCard() {
   await goLibrary();
+  await browser.waitUntil(
+    async () => (await $$('.book-card[data-kind="epub"]:not(.book-card--demo)')).length > 0,
+    { timeout: 20_000, timeoutMsg: "library EPUB card not ready" },
+  );
   const card = await $('.book-card[data-kind="epub"]:not(.book-card--demo)');
   await expect(card).toBeDisplayed();
   await card.click();
@@ -1448,6 +1456,15 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     };
     const openHamlet = async () => {
       await goLibrary();
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(() =>
+            Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).some((c) =>
+              /hamlet/i.test(c.textContent ?? ""),
+            ),
+          )) === true,
+        { timeout: 20_000, timeoutMsg: "Hamlet MOBI card not in library" },
+      );
       const clicked = await browser.execute(() => {
         const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
           /hamlet/i.test(c.textContent ?? ""),
@@ -1456,6 +1473,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         return Boolean(card);
       });
       if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await browser.waitUntil(async () => (await $("#epub-root").isExisting()), {
+        timeout: 20_000,
+        timeoutMsg: "Hamlet click did not open foliate reader",
+      });
       await waitEpubTextReady(120_000);
     };
     const checkReader = async (label: string, flow: Flow, minChars: number, opts?: { requireChapterAdvance?: boolean }) => {
@@ -1636,6 +1657,15 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     };
     const openHamlet = async () => {
       await goLibrary();
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(() =>
+            Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).some((c) =>
+              /hamlet/i.test(c.textContent ?? ""),
+            ),
+          )) === true,
+        { timeout: 20_000, timeoutMsg: "Hamlet MOBI card not in library" },
+      );
       const clicked = await browser.execute(() => {
         const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
           /hamlet/i.test(c.textContent ?? ""),
@@ -1644,6 +1674,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         return Boolean(card);
       });
       if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await browser.waitUntil(async () => (await $("#epub-root").isExisting()), {
+        timeout: 20_000,
+        timeoutMsg: "Hamlet click did not open foliate reader",
+      });
       await waitEpubTextReady(120_000);
     };
 
