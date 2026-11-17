@@ -158,6 +158,20 @@ export async function ensureBookCoverCached(opts: {
   if (await isCoverCacheValid(opts.libraryRoot, opts.slug, opts.sha256)) {
     return (await readMeta(opts.libraryRoot, opts.slug))!.kind;
   }
+  if (opts.kind === "pdf" && !isTauri()) {
+    const png = await renderTypographicCoverPng({
+      slug: opts.slug,
+      title: opts.title,
+      author: opts.author,
+    });
+    await writePng(opts.libraryRoot, opts.slug, png);
+    await writeMeta(opts.libraryRoot, opts.slug, {
+      sourceSha256: opts.sha256,
+      kind: "typography",
+      updated: new Date().toISOString(),
+    });
+    return "typography";
+  }
   const bytes = await readBookBytes(opts.libraryRoot, opts.slug, opts.filePath);
   if (!bytes) {
     const png = await renderTypographicCoverPng({
@@ -243,6 +257,9 @@ export async function enqueueCoverGeneration(
     } catch (e) {
       console.warn("cover cache", b.slug, e);
     }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
   }
   onDone?.();
 }

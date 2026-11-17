@@ -28,12 +28,7 @@ import { formatCitation, type CitationStyleId } from "./lib/citation-format";
 import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/reader-bibliography";
 import { renderBookCoverMarkup } from "./ui/book-cover";
 import { renderTypographicCoverHtml } from "./lib/typographic-cover";
-import {
-  ensureBookCoverCached,
-  enqueueCoverGeneration,
-  setCustomBookCover,
-  coverImageUrl,
-} from "./lib/book-cover-cache";
+import { enqueueCoverGeneration, setCustomBookCover, coverImageUrl } from "./lib/book-cover-cache";
 import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
@@ -151,6 +146,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   let pdf: PdfReader | null = null;
   let pdfPageCounterDetach: (() => void) | null = null;
   let epub: EpubReader | null = null;
+  let readerBibMountedSlug = "";
+  let libraryRenderNonce = 0;
   const linkIndex = new NoteIndex();
   let activeNoteId: string | undefined;
 
@@ -268,6 +265,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     contextTitle.textContent = text;
   };
 
+  const mountReaderBibliographyIfNeeded = () => {
+    if (!state.bibliography || !state.slug) return;
+    if (readerBibMountedSlug === state.slug && readerBibPanel.querySelector("[data-bib-field]")) return;
+    readerBibPanel.innerHTML = renderReaderBibliographyFields(state.bibliography);
+    readerBibMountedSlug = state.slug;
+    bindBibliographyForm();
+  };
+
   const syncReadingChrome = () => {
     const inReader = state.route === "reader";
     root.classList.toggle("reading-mode", inReader);
@@ -275,8 +280,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     backlinksBtn.hidden = !inReader;
     readerBib.hidden = !inReader || !state.book;
     if (inReader && state.bibliography) {
-      readerBibPanel.innerHTML = renderReaderBibliographyFields(state.bibliography);
-      bindBibliographyForm();
+      mountReaderBibliographyIfNeeded();
+    } else if (!inReader) {
+      readerBibMountedSlug = "";
     }
     if (!inReader) {
       root.classList.add("backlinks-hidden");
@@ -332,6 +338,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         authors: [...state.bibliography.authors, { given: "", family: "" }],
       };
       readerBibPanel.innerHTML = renderReaderBibliographyFields(state.bibliography);
+      readerBibMountedSlug = state.slug;
       bindBibliographyForm();
     });
   };
@@ -541,7 +548,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const renderLibrary = async () => {
+    const renderNonce = ++libraryRenderNonce;
     const recent = await listBooksForLibrary();
+    if (renderNonce !== libraryRenderNonce) return;
     const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
     const userCards = recent.length
       ? (
@@ -572,6 +581,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           )
         ).join("")
       : "";
+    if (renderNonce !== libraryRenderNonce) return;
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
@@ -628,9 +638,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           author: b.author,
           filePath: b.filePath,
         })),
-        () => {
-          if (state.route === "library") void renderLibrary();
-        },
       );
     }
   };
@@ -1127,16 +1134,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       state.bibliography = migrateBibliographyFromCard(state.book.title, state.book.author, null);
     }
     await ensureBookCard(state.libraryRoot, state.book);
-    const kindForCover = fileKind ?? "pdf";
-    void ensureBookCoverCached({
-      libraryRoot: state.libraryRoot,
-      slug: state.slug,
-      kind: kindForCover,
-      sha256: state.book.sha256,
-      title: state.book.title,
-      author: state.book.author,
-      filePath: state.book.filePath,
-    });
     await refreshInspectorAfterQuoteSave(state.slug);
     const now = new Date().toISOString();
     const selectionHint = () => toast("Označení připraveno — stiskněte H pro uložení citace", "info");
@@ -1438,11 +1435,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     currentBookSlug: () => state.slug,
     openBibliographyPanel: () => {
       readerBib.open = true;
-      syncReadingChrome();
+      readerBib.hidden = false;
+      mountReaderBibliographyIfNeeded();
     },
     setBibliographyField: (field: string, value: string) => {
       readerBib.open = true;
-      syncReadingChrome();
+      readerBib.hidden = false;
+      mountReaderBibliographyIfNeeded();
       const el = readerBibPanel.querySelector(`[data-bib-field="${field}"]`) as HTMLInputElement | null;
       if (!el) throw new Error(`Missing bibliography field: ${field}`);
       el.value = value;
