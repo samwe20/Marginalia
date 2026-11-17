@@ -51,6 +51,7 @@ pub fn run() {
             smoke::smoke_drop_book,
             smoke::smoke_dialog_capable,
             smoke::smoke_list_quote_files,
+            smoke::smoke_read_library_text,
             smoke::smoke_epub_fixture_paragraph,
             smoke::smoke_defer_fixture_library,
             smoke::smoke_reset_first_run,

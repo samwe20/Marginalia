@@ -12,12 +12,13 @@ export interface PdfReaderOptions {
   getMode: () => HighlightMode;
   onHighlight: (quote: { text: string; pageIndex: number; anchor: ReturnType<typeof anchorFromPdfSelection> }) => void;
   onPageLabel?: (pageIndex: number) => string;
+  onSelectionPending?: () => void;
 }
 
 export class PdfReader {
   private pdf: pdfjs.PDFDocumentProxy | null = null;
   private pageRoots = new Map<number, HTMLElement>();
-  private detach: (() => void) | null = null;
+  private highlight: import("../lib/highlighter").HighlightHandle | null = null;
 
   constructor(private opts: PdfReaderOptions) {}
 
@@ -75,9 +76,13 @@ export class PdfReader {
     }
   }
 
+  commitPendingHighlight(): boolean {
+    return this.highlight?.commitPending() ?? false;
+  }
+
   private wireHighlighter(): void {
-    this.detach?.();
-    this.detach = attachHighlighter(
+    this.highlight?.detach();
+    this.highlight = attachHighlighter(
       this.opts.container,
       (x, y) => {
         const el = document.elementFromPoint(x, y);
@@ -100,6 +105,7 @@ export class PdfReader {
         this.paintHighlight(layer, range);
       },
       this.opts.getMode,
+      () => this.opts.onSelectionPending?.(),
     );
   }
 
@@ -135,8 +141,11 @@ export class PdfReader {
   }
 
   paintHighlight(_layer: HTMLElement, range: Range): void {
-    const mark = document.createElement("mark");
+    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
     mark.className = "quote-highlight";
+    mark.style.backgroundColor = "#f0c84b";
+    mark.style.borderRadius = "3px";
+    mark.style.color = "inherit";
     try {
       range.surroundContents(mark);
     } catch {
@@ -144,6 +153,10 @@ export class PdfReader {
       mark.appendChild(text);
       range.insertNode(mark);
     }
+  }
+
+  highlightPaintCount(): number {
+    return this.opts.container.querySelectorAll("mark.quote-highlight").length;
   }
 
   async restoreHighlights(
@@ -190,8 +203,8 @@ export class PdfReader {
   }
 
   destroy(): void {
-    this.detach?.();
-    this.detach = null;
+    this.highlight?.detach();
+    this.highlight = null;
     this.pageRoots.clear();
     this.pdf?.destroy();
     this.pdf = null;

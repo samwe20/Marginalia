@@ -1,7 +1,24 @@
 import "foliate-js/view.js";
+import { Overlayer } from "foliate-js/overlayer.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
-import { attachHighlighter, rangeToOffsets, type HighlightMode } from "../lib/highlighter";
+import {
+  collectFoliateContentDocuments,
+  findFallbackPointerRect,
+  findIframePointerRect,
+  iframeVisibleTextLength,
+  viewportVisibleTextLength,
+  visibleTextLengthIn,
+  visibleTextWidthRatio,
+} from "../lib/epub-iframe-geometry";
+import {
+  attachHighlighter,
+  caretRangeFromViewportPoint,
+  rangeToOffsets,
+  type HighlightHandle,
+  type HighlightMode,
+} from "../lib/highlighter";
 import { isTauri } from "../lib/runtime";
+import { loadReaderFlow, type FoliateFlow } from "../lib/reader-flow";
 
 export interface EpubReaderOptions {
   container: HTMLElement;
@@ -11,36 +28,368 @@ export interface EpubReaderOptions {
     cfi: string;
     anchor: ReturnType<typeof anchorFromEpubSelection>;
   }) => void;
+  onSelectionPending?: () => void;
+  /** Called when user presses H inside foliate iframe (focus there). */
+  onHighlightSaveKey?: () => void;
+  /** Last reading position (EPUB CFI) to restore; otherwise the book opens at its start. */
+  initialCfi?: string | null;
+  onRelocate?: (cfi: string) => void;
+  flow?: FoliateFlow;
 }
 
 type FoliateView = HTMLElement & {
   open: (book: unknown) => Promise<void>;
   init?: (opts: { showTextStart?: boolean }) => Promise<void>;
   goToTextStart?: () => Promise<void>;
-  goTo: (target: string | number) => Promise<void>;
-  getCFI: (range: Range) => string;
-  renderer?: {
+  goTo: (target: string | number) => Promise<unknown>;
+  getCFI: (sectionIndex: number, range?: Range) => string;
+  addAnnotation?: (annotation: FoliateHighlightAnnotation) => Promise<unknown>;
+  next?: () => Promise<void>;
+  prev?: () => Promise<void>;
+  book?: { sections?: unknown[] };
+  renderer?: HTMLElement & {
     root?: HTMLElement;
-    getContents?: () => { index: number; doc: Document }[];
-    addEventListener?: (type: string, fn: (e: Event) => void) => void;
+    getContents?: () => {
+      index: number;
+      doc: Document;
+      overlayer?: { element?: SVGSVGElement };
+    }[];
+    next?: () => Promise<void>;
+    prev?: () => Promise<void>;
   };
 };
+
+type FoliateHighlightAnnotation = {
+  value: string;
+  color: string;
+};
+
+const HIGHLIGHT_COLOR = "#f0c84b";
 
 /** Thin wrapper around foliate-js `foliate-view` custom element. */
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
-  private detach: (() => void) | null = null;
+  private highlights: HighlightHandle[] = [];
   private readyTimer: number | null = null;
   private docText = "";
   private fixturePlainText: string | null = null;
+  private keyHandlers: { doc: Document; fn: (ev: KeyboardEvent) => void }[] = [];
+  private highlightAnnotations = new Map<string, FoliateHighlightAnnotation>();
 
   constructor(private opts: EpubReaderOptions) {}
+
+  hasPendingHighlight(): boolean {
+    return this.highlights.some((h) => h.hasPending());
+  }
+
+  commitPendingHighlight(): boolean {
+    for (const handle of this.highlights) {
+      if (handle.commitPending()) return true;
+    }
+    const live = this.findLiveSelectionRange();
+    if (live && this.applyHighlightRange(live)) return true;
+    return false;
+  }
+
+  private findLiveSelectionRange(): Range | null {
+    for (const doc of this.contentDocuments()) {
+      const r = doc.getSelection()?.rangeCount ? doc.getSelection()!.getRangeAt(0) : null;
+      if (r && !r.collapsed && r.toString().trim()) return r.cloneRange();
+    }
+    const r = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0) : null;
+    if (!r || r.collapsed || !r.toString().trim()) return null;
+    const node = r.commonAncestorContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    if (el && this.opts.container.contains(el)) return r.cloneRange();
+    return null;
+  }
+
+  private applyHighlightRange(range: Range): boolean {
+    const view = this.view;
+    if (!view || this.opts.getMode() !== "highlight") return false;
+    const root = this.offsetRootForRange(range);
+    if (!root) return false;
+    const { start, end, text } = rangeToOffsets(root, range);
+    if (!text.trim()) return false;
+    const entry = this.contentEntryForRange(range);
+    let cfi = "/0/0";
+    if (entry) {
+      try {
+        cfi = view.getCFI(entry.index, range);
+      } catch {
+        /* Plain-text fallback has no EPUB range; TextQuoteSelector still restores it. */
+      }
+    }
+    const anchor = anchorFromEpubSelection(root.textContent ?? this.docText, start, end, cfi);
+    void this.opts.onHighlight({ text, cfi, anchor });
+    this.paintHighlight(range);
+    range.startContainer.ownerDocument?.getSelection()?.removeAllRanges();
+    window.getSelection()?.removeAllRanges();
+    return true;
+  }
+
+  private wireHighlighter(): void {
+    const view = this.view;
+    if (!view) return;
+    this.highlights.forEach((h) => h.detach());
+    this.highlights = [];
+    const roots = this.collectPointerRoots();
+    const onComplete = (range: Range) => {
+      this.applyHighlightRange(range);
+    };
+    for (const root of roots) {
+      this.highlights.push(
+        attachHighlighter(
+          root,
+          caretRangeFromViewportPoint,
+          onComplete,
+          this.opts.getMode,
+          () => this.opts.onSelectionPending?.(),
+        ),
+      );
+    }
+    this.wireHighlightKeyHandlers();
+  }
+
+  private wireHighlightKeyHandlers(): void {
+    this.unwireHighlightKeyHandlers();
+    const onHighlightSaveKey = this.opts.onHighlightSaveKey;
+    if (!onHighlightSaveKey) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (this.opts.getMode() !== "highlight") return;
+      if (ev.key.length !== 1 || ev.key.toLowerCase() !== "h") return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const t = ev.target as HTMLElement | null;
+      if (t?.closest("input, textarea, [contenteditable='true']")) return;
+      ev.preventDefault();
+      (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number }).__MARGINALIA_LAST_HIGHLIGHT_H__ =
+        Date.now();
+      onHighlightSaveKey();
+    };
+    for (const doc of this.contentDocuments()) {
+      doc.addEventListener("keydown", onKey);
+      this.keyHandlers.push({ doc, fn: onKey });
+    }
+  }
+
+  private unwireHighlightKeyHandlers(): void {
+    for (const { doc, fn } of this.keyHandlers) doc.removeEventListener("keydown", fn);
+    this.keyHandlers = [];
+  }
+
+  selectionDiagnostics(): {
+    selections: { source: string; length: number; preview: string }[];
+    mainSelectionLength: number;
+    mainSelectionPreview: string;
+  } {
+    const selections: { source: string; length: number; preview: string }[] = [];
+    for (const doc of this.contentDocuments()) {
+      const text = doc.getSelection()?.toString().trim() ?? "";
+      if (text) {
+        selections.push({
+          source: doc.title || "foliate-iframe",
+          length: text.length,
+          preview: text.slice(0, 160),
+        });
+      }
+    }
+    const main = window.getSelection()?.toString().trim() ?? "";
+    return {
+      selections,
+      mainSelectionLength: main.length,
+      mainSelectionPreview: main.slice(0, 160),
+    };
+  }
+
+  private collectPointerRoots(): HTMLElement[] {
+    const roots: HTMLElement[] = [];
+    const seen = new Set<HTMLElement>();
+    const add = (el: HTMLElement | null | undefined) => {
+      if (el && !seen.has(el)) {
+        seen.add(el);
+        roots.push(el);
+      }
+    };
+    for (const doc of this.contentDocuments()) {
+      add(doc.body ?? null);
+    }
+    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? this.view;
+    if (highlightRoot instanceof HTMLElement) add(highlightRoot);
+    return roots;
+  }
+
+  private offsetRootForRange(range: Range): HTMLElement | null {
+    let node: Node | null = range.commonAncestorContainer;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    if (node?.nodeType === Node.ELEMENT_NODE) {
+      const element = node as Element;
+      const body = element.ownerDocument?.body;
+      if (body?.contains(element)) return body;
+    }
+    return this.contentRoot ?? this.resolveContentRoot();
+  }
+
+  contentDocuments(): Document[] {
+    return collectFoliateContentDocuments(this.view, this.opts.container);
+  }
+
+  private contentEntryForRange(
+    range: Range,
+  ): { index: number; doc: Document; overlayer?: { element?: SVGSVGElement } } | null {
+    const doc = range.startContainer.ownerDocument;
+    return this.view?.renderer?.getContents?.().find((entry) => entry.doc === doc) ?? null;
+  }
+
+  private wireAnnotationOverlay(view: FoliateView): void {
+    view.addEventListener("draw-annotation", (event) => {
+      const detail = (event as CustomEvent<{
+        annotation: FoliateHighlightAnnotation;
+        draw: (
+          draw: (
+            rects: { left: number; top: number; width: number; height: number }[],
+            options: { color?: string },
+          ) => SVGGElement,
+          options: { color: string },
+        ) => void;
+      }>).detail;
+      if (!detail || !this.highlightAnnotations.has(detail.annotation.value)) return;
+      detail.draw(
+        (rects, options) => {
+          const group = Overlayer.highlight(rects, options);
+          group.classList.add("quote-highlight-overlay");
+          group.dataset.annotationValue = detail.annotation.value;
+          return group;
+        },
+        { color: detail.annotation.color },
+      );
+    });
+    view.addEventListener("create-overlay", () => {
+      // foliate emits this just before attaching the overlayer; resolveNavigation yields first.
+      queueMicrotask(() => void this.drawStoredAnnotations());
+    });
+  }
+
+  private async drawStoredAnnotations(): Promise<void> {
+    const view = this.view;
+    if (!view?.addAnnotation) return;
+    for (const annotation of this.highlightAnnotations.values()) {
+      try {
+        await view.addAnnotation(annotation);
+      } catch {
+        /* A malformed legacy CFI must not prevent the book from opening. */
+      }
+    }
+  }
+
+  highlightPaintCount(): number {
+    let count = this.opts.container.querySelectorAll("mark.quote-highlight").length;
+    for (const entry of this.view?.renderer?.getContents?.() ?? []) {
+      count += entry.overlayer?.element?.querySelectorAll(".quote-highlight-overlay").length ?? 0;
+    }
+    return count;
+  }
+
+  foliateIframeVisibleTextLength(): number {
+    return iframeVisibleTextLength(this.contentDocuments());
+  }
+
+  /** Viewport drag endpoints for text inside foliate EPUB iframes only. */
+  foliateIframePointerRect(): { x: number; y: number; x2: number; y2: number } | null {
+    return findIframePointerRect(this.contentDocuments());
+  }
+
+  /** Pointer drag endpoints for the surface the user actually reads (iframe, else plain fallback). */
+  readerPointerSelectionRect(): { x: number; y: number; x2: number; y2: number } | null {
+    return (
+      this.foliateIframePointerRect() ?? findFallbackPointerRect(this.opts.container)
+    );
+  }
+
+  /** Text the reader can actually see in the window (foliate iframe or plain-text fallback). */
+  viewportVisibleTextLength(): number {
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    const fallbackLen = fallback ? visibleTextLengthIn(fallback) : 0;
+    return Math.max(fallbackLen, this.iframeViewportVisibleTextLength());
+  }
+
+  private iframeViewportVisibleTextLength(): number {
+    if (!this.view || this.view.style.display === "none") return 0;
+    return viewportVisibleTextLength(this.contentDocuments());
+  }
+
+  currentSectionIndex(): number | null {
+    return this.view?.renderer?.getContents?.()?.[0]?.index ?? null;
+  }
+
+  get flow(): FoliateFlow {
+    return this.opts.flow ?? loadReaderFlow();
+  }
+
+  /** Reader toolbar buttons: turn the page when paginated, jump a chapter when scrolled. */
+  async navigateNext(): Promise<void> {
+    if (this.flow === "scrolled") await this.goToSectionOffset(1);
+    else await this.view?.next?.();
+  }
+
+  async navigatePrev(): Promise<void> {
+    if (this.flow === "scrolled") await this.goToSectionOffset(-1);
+    else await this.view?.prev?.();
+  }
+
+  async nextSection(): Promise<void> {
+    await this.goToSectionOffset(1);
+  }
+
+  private async goToSectionOffset(delta: number): Promise<void> {
+    const view = this.view;
+    const index = this.currentSectionIndex();
+    const count = view?.book?.sections?.length ?? 0;
+    if (!view || index == null) return;
+    const target = index + delta;
+    if (target < 0 || target >= count) return;
+    await view.goTo(target);
+  }
+
+  readerRenderMode(): "iframe" | "fallback" | "empty" {
+    if (this.iframeViewportVisibleTextLength() > 3) return "iframe";
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    if (fallback && visibleTextLengthIn(fallback) > 3) return "fallback";
+    return "empty";
+  }
+
+  readerRenderInfo(): {
+    mode: "iframe" | "fallback" | "empty";
+    iframeTextLength: number;
+    fallbackTextLength: number;
+    visibleTextLength: number;
+    viewportVisibleTextLength: number;
+    sectionIndex: number | null;
+    flow: FoliateFlow;
+    textWidthRatio: number;
+    iframeElementInLightDom: boolean;
+  } {
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    return {
+      mode: this.readerRenderMode(),
+      iframeTextLength: this.foliateIframeVisibleTextLength(),
+      fallbackTextLength: fallback?.textContent?.trim().length ?? 0,
+      visibleTextLength: this.visibleDomTextLength(),
+      viewportVisibleTextLength: this.viewportVisibleTextLength(),
+      sectionIndex: this.currentSectionIndex(),
+      flow: this.view?.renderer?.getAttribute("flow") === "scrolled" ? "scrolled" : "paginated",
+      textWidthRatio: this.view && this.view.style.display !== "none" ? visibleTextWidthRatio(this.contentDocuments()) : 0,
+      iframeElementInLightDom: Boolean(this.opts.container.querySelector("iframe")),
+    };
+  }
 
   async load(file: Blob | File): Promise<void> {
     this.destroy();
     const { container } = this.opts;
     container.innerHTML = "";
+    const isMobi =
+      (file instanceof File && /\.(mobi|azw3?)$/i.test(file.name)) ||
+      (typeof file.type === "string" && /mobi|amazon/i.test(file.type));
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
@@ -64,46 +413,33 @@ export class EpubReader {
     container.className = "epub-root";
     container.appendChild(view);
     this.view = view;
+    this.wireAnnotationOverlay(view);
 
     await view.open(book);
-    const sectionBook = book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] };
-    const startIndex = await this.findBestReadableSectionIndex(sectionBook);
-    const paginator = view.renderer as {
-      firstSection?: () => Promise<void>;
-      goTo?: (target: { index: number }) => Promise<void>;
-      next?: () => Promise<void>;
-    };
-    if (paginator?.goTo) await paginator.goTo({ index: startIndex });
-    else await view.goTo(startIndex);
-    await this.ensureVisibleSection(paginator, view, sectionBook, startIndex);
-    view.renderer?.addEventListener?.("load", () => {
+    if (this.flow === "scrolled") {
+      view.renderer?.setAttribute("flow", "scrolled");
+    } else {
+      // One column per page: the reader pane is ~42rem wide, a two-page spread would be unreadable.
+      view.renderer?.setAttribute("max-column-count", "1");
+      view.renderer?.setAttribute("max-inline-size", "720px");
+    }
+    view.renderer?.addEventListener("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
+      this.wireHighlighter();
     });
-    view.renderer?.addEventListener?.("relocate", () => {
+    view.addEventListener("relocate", (e) => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
+      const cfi = (e as CustomEvent<{ cfi?: string }>).detail?.cfi;
+      if (cfi) this.opts.onRelocate?.(cfi);
     });
-    await this.waitForReadableContent();
+    await this.goToStart(view);
+    await this.waitForReadableContent(isMobi);
     this.mountPlainTextFallbackIfNeeded();
-    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
-
-    this.detach = attachHighlighter(
-      highlightRoot,
-      (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
-      (range) => {
-        const root = this.contentRoot ?? highlightRoot;
-        if (!root) return;
-        const { start, end, text } = rangeToOffsets(root, range);
-        const cfi = view.getCFI?.(range) ?? `/0/0`;
-        const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
-        this.opts.onHighlight({ text, cfi, anchor });
-        this.paintHighlight(range);
-      },
-      this.opts.getMode,
-    );
+    this.wireHighlighter();
 
     view.addEventListener("relayout", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
@@ -113,11 +449,11 @@ export class EpubReader {
     this.beginTextReadyWatch();
   }
 
-  private waitForReadableContent(): Promise<void> {
+  private waitForReadableContent(aggressiveFallback = false): Promise<void> {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
-        if (this.visibleDomTextLength() > 3) {
+        if (this.viewportVisibleTextLength() > 3) {
           this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
           this.refreshDocText();
           this.syncTextReadyFlag();
@@ -125,8 +461,9 @@ export class EpubReader {
           return;
         }
         tries += 1;
-        if (tries >= 60) this.mountPlainTextFallbackIfNeeded();
-        if (tries >= 180) {
+        const fallbackAfter = aggressiveFallback ? 10 : 20;
+        if (tries >= fallbackAfter) this.mountPlainTextFallbackIfNeeded();
+        if (tries >= 60) {
           this.mountPlainTextFallbackIfNeeded();
           this.syncTextReadyFlag();
           resolve();
@@ -138,14 +475,16 @@ export class EpubReader {
     });
   }
 
-  /** When foliate leaves the paginator empty (large EPUB / WebView2), show parsed spine text in-page. */
+  /** When foliate paints nothing the reader can see, show the parsed book text in-page instead. */
   private mountPlainTextFallbackIfNeeded(): void {
-    if (this.visibleDomTextLength() > 3 || !this.fixturePlainText) return;
+    if (this.iframeViewportVisibleTextLength() > 3 || !this.fixturePlainText) return;
     const { container } = this.opts;
+    if (this.view) this.view.style.display = "none";
     if (container.querySelector(".epub-fallback-text")) {
       this.contentRoot = container.querySelector(".epub-fallback-text");
       this.refreshDocText();
       this.syncTextReadyFlag();
+      this.wireHighlighter();
       return;
     }
     const article = document.createElement("article");
@@ -155,6 +494,7 @@ export class EpubReader {
     this.contentRoot = article;
     this.refreshDocText();
     this.syncTextReadyFlag();
+    this.wireHighlighter();
   }
 
   /** Visible text in foliate DOM (not ZIP/Rust fallback). */
@@ -171,55 +511,31 @@ export class EpubReader {
     return root?.textContent?.trim().length ?? 0;
   }
 
-  private async ensureVisibleSection(
-    paginator: { goTo?: (target: { index: number }) => Promise<void>; next?: () => Promise<void> } | undefined,
-    view: FoliateView,
-    book: { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
-    startIndex: number,
-  ): Promise<void> {
-    const tryIndex = async (index: number) => {
-      if (paginator?.goTo) await paginator.goTo({ index });
-      else await view.goTo(index);
-      await new Promise((r) => window.setTimeout(r, 350));
-    };
-    const sections = book.sections ?? [];
-    const linearIndices = sections
-      .map((s, i) => (s?.linear !== "no" ? i : -1))
-      .filter((i) => i >= 0);
-    const candidates = [startIndex, ...linearIndices.filter((i) => i !== startIndex)].slice(0, 14);
-    for (const index of candidates) {
-      await tryIndex(index);
-      if (this.visibleDomTextLength() > 3) return;
-    }
-    for (let step = 0; step < 6 && this.visibleDomTextLength() <= 3; step++) {
-      await paginator?.next?.();
-      await new Promise((r) => window.setTimeout(r, 350));
-    }
-  }
-
-  private async findBestReadableSectionIndex(book: {
-    sections?: { linear?: string; createDocument?: () => Promise<Document> }[];
-  }): Promise<number> {
-    const sections = book.sections ?? [];
-    let bestIdx = sections.findIndex((s) => s.linear !== "no");
-    if (bestIdx < 0) bestIdx = 0;
-    let bestLen = 0;
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i];
-      if (section?.linear === "no") continue;
+  /**
+   * Open at the saved position, else at the start of the book (first body landmark or first
+   * linear section). Skip forward only past sections that paint no visible text (e.g. a cover image).
+   */
+  private async goToStart(view: FoliateView): Promise<void> {
+    const settle = () => new Promise((r) => window.setTimeout(r, 300));
+    let placed = false;
+    if (this.opts.initialCfi) {
       try {
-        if (!section?.createDocument) continue;
-        const doc = await section.createDocument();
-        const len = doc.body?.textContent?.replace(/\s+/g, " ").trim().length ?? 0;
-        if (len > bestLen) {
-          bestLen = len;
-          bestIdx = i;
-        }
+        placed = (await view.goTo(this.opts.initialCfi)) != null;
       } catch {
-        /* skip broken section */
+        placed = false;
       }
     }
-    return bestIdx;
+    if (!placed) {
+      if (view.goToTextStart) await view.goToTextStart();
+      else await view.goTo(0);
+    }
+    await settle();
+    if (placed) return;
+    const sectionCount = view.book?.sections?.length ?? 0;
+    for (let step = 0; step < Math.min(4, sectionCount) && this.iframeViewportVisibleTextLength() <= 3; step++) {
+      await view.next?.();
+      await settle();
+    }
   }
 
   private beginTextReadyWatch(): void {
@@ -268,6 +584,7 @@ export class EpubReader {
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
     container.dataset.epubTextReady = this.visibleDomTextLength() > 3 ? "1" : "0";
+    container.dataset.epubRenderMode = this.readerRenderMode();
   }
 
   private refreshDocText(): void {
@@ -282,6 +599,10 @@ export class EpubReader {
 
   /** CI: force plain-text fallback when foliate renders an empty page (WebView2). */
   async ensureReadableFallback(): Promise<void> {
+    if (this.foliateIframeVisibleTextLength() > 3) {
+      this.syncTextReadyFlag();
+      return;
+    }
     if (this.visibleDomTextLength() > 3) return;
     if (!this.fixturePlainText && isTauri()) {
       try {
@@ -317,18 +638,24 @@ export class EpubReader {
   }): Promise<void> {
     try {
       const sections = book.sections ?? [];
-      let best = "";
+      const parts: string[] = [];
+      let total = 0;
       for (const section of sections) {
-        if (section.linear === "no" || !section.createDocument) continue;
+        if (total >= 200_000) break;
+        if (section.linear === "no" || !section?.createDocument) continue;
         try {
           const doc = await section.createDocument();
           const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-          if (plain.length > best.length) best = plain;
+          if (plain) {
+            parts.push(plain);
+            total += plain.length;
+          }
         } catch {
           /* try next */
         }
       }
-      if (best.length > 3) this.fixturePlainText = best;
+      const text = parts.join("\n\n");
+      if (text.length > 3) this.fixturePlainText = text;
     } catch {
       this.fixturePlainText = null;
     }
@@ -346,11 +673,19 @@ export class EpubReader {
     const hit = this.firstSelectableText();
     if (!hit) return null;
     const { node, root } = hit;
-    const range = document.createRange();
+    const range = node.ownerDocument.createRange();
     range.selectNodeContents(node);
     const { start, end, text } = rangeToOffsets(root, range);
-    const cfi = this.view.getCFI?.(range) ?? "/0/0";
-    const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+    const entry = this.contentEntryForRange(range);
+    let cfi = "/0/0";
+    if (entry) {
+      try {
+        cfi = this.view.getCFI(entry.index, range);
+      } catch {
+        /* Keep TextQuoteSelector as the fallback anchor. */
+      }
+    }
+    const anchor = anchorFromEpubSelection(root.textContent ?? this.docText, start, end, cfi);
     return { text, cfi, anchor, range };
   }
 
@@ -380,37 +715,41 @@ export class EpubReader {
   }
 
   private findTextInSubtree(root: Node): { node: Text; root: HTMLElement } | null {
-    if (root instanceof HTMLIFrameElement) {
+    if (
+      root.nodeType === Node.ELEMENT_NODE &&
+      (root as Element).tagName.toLowerCase() === "iframe"
+    ) {
       try {
-        const doc = root.contentDocument;
+        const doc = (root as HTMLIFrameElement).contentDocument;
         if (doc?.body) return this.findTextInSubtree(doc.body);
       } catch {
         /* cross-origin */
       }
       return null;
     }
-    if (root instanceof HTMLElement) {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      const element = root as HTMLElement;
+      const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode() as Text | null;
       while (node) {
-        if (node.textContent?.trim()) return { node, root };
+        if (node.textContent?.trim()) return { node, root: element };
         node = walker.nextNode() as Text | null;
       }
-      for (const iframe of root.querySelectorAll("iframe")) {
+      for (const iframe of element.querySelectorAll("iframe")) {
         const nested = this.findTextInSubtree(iframe);
         if (nested) return nested;
       }
-      if (root.shadowRoot) {
-        for (const child of root.shadowRoot.childNodes) {
+      if (element.shadowRoot) {
+        for (const child of element.shadowRoot.childNodes) {
           const nested = this.findTextInSubtree(child);
           if (nested) return nested;
         }
       }
-      for (const child of root.children) {
+      for (const child of element.children) {
         const nested = this.findTextInSubtree(child);
         if (nested) return nested;
       }
-    } else if (root instanceof DocumentFragment) {
+    } else if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
       for (const child of root.childNodes) {
         const nested = this.findTextInSubtree(child);
         if (nested) return nested;
@@ -420,8 +759,27 @@ export class EpubReader {
   }
 
   paintHighlight(range: Range): void {
-    const mark = document.createElement("mark");
+    const entry = this.contentEntryForRange(range);
+    if (entry && this.view?.addAnnotation) {
+      try {
+        const value = this.view.getCFI(entry.index, range);
+        const annotation = { value, color: HIGHLIGHT_COLOR };
+        this.highlightAnnotations.set(value, annotation);
+        void this.view.addAnnotation(annotation);
+        return;
+      } catch {
+        /* Fall through to a DOM mark if foliate cannot resolve this range. */
+      }
+    }
+    this.paintInlineHighlight(range);
+  }
+
+  private paintInlineHighlight(range: Range): void {
+    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
     mark.className = "quote-highlight";
+    mark.style.backgroundColor = HIGHLIGHT_COLOR;
+    mark.style.borderRadius = "3px";
+    mark.style.color = "inherit";
     try {
       range.surroundContents(mark);
     } catch {
@@ -439,21 +797,31 @@ export class EpubReader {
   async restoreHighlights(
     quotes: { anchor: ReturnType<typeof anchorFromEpubSelection> }[],
   ): Promise<void> {
-    if (!this.contentRoot || !this.view) return;
-    this.refreshDocText();
+    if (!this.view) return;
+    this.highlightAnnotations.clear();
+    const fallback = this.opts.container.querySelector<HTMLElement>(".epub-fallback-text");
+    if (fallback) {
+      const text = fallback.textContent ?? "";
+      for (const q of quotes) {
+        const located = reanchorInText(text, q.anchor);
+        if (!located) continue;
+        const range = this.offsetsToRange(fallback, located.start, located.end);
+        if (range) this.paintInlineHighlight(range);
+      }
+      return;
+    }
     for (const q of quotes) {
       const cfi = getEpubCfi(q.anchor);
-      if (cfi) await this.view.goTo(cfi);
-      const located = reanchorInText(this.docText, q.anchor);
-      if (!located) continue;
-      const range = this.offsetsToRange(located.start, located.end);
-      if (range) this.paintHighlight(range);
+      if (cfi?.startsWith("epubcfi(")) {
+        this.highlightAnnotations.set(cfi, { value: cfi, color: HIGHLIGHT_COLOR });
+      }
     }
+    await this.drawStoredAnnotations();
   }
 
-  private offsetsToRange(start: number, end: number): Range | null {
-    if (!this.contentRoot) return null;
-    const walker = document.createTreeWalker(this.contentRoot, NodeFilter.SHOW_TEXT);
+  private offsetsToRange(root: HTMLElement, start: number, end: number): Range | null {
+    const doc = root.ownerDocument;
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let offset = 0;
     let startNode: Text | null = null;
     let endNode: Text | null = null;
@@ -474,7 +842,7 @@ export class EpubReader {
       offset = next;
     }
     if (!startNode || !endNode) return null;
-    const range = document.createRange();
+    const range = doc.createRange();
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
     return range;
@@ -483,11 +851,13 @@ export class EpubReader {
   destroy(): void {
     if (this.readyTimer) window.clearTimeout(this.readyTimer);
     this.readyTimer = null;
-    this.detach?.();
-    this.detach = null;
+    this.unwireHighlightKeyHandlers();
+    this.highlights.forEach((h) => h.detach());
+    this.highlights = [];
     this.view?.remove();
     this.view = null;
     this.contentRoot = null;
+    this.highlightAnnotations.clear();
     this.opts.container.dataset.epubTextReady = "0";
   }
 }

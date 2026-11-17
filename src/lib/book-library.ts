@@ -84,10 +84,11 @@ function binaryStorageKey(slug: string, ext: string): string {
 }
 
 export function parseBookCardYaml(content: string): ParsedBookCard | null {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
+  const closed = content.match(/^---\n([\s\S]*?)\n---/);
+  const open = closed ?? content.match(/^---\n([\s\S]*)$/);
+  if (!open) return null;
   const pick = (key: string) => {
-    const line = m[1].split("\n").find((l) => l.startsWith(`${key}:`));
+    const line = open[1].split("\n").find((l) => l.startsWith(`${key}:`));
     if (!line) return "";
     const raw = line.slice(key.length + 1).trim();
     try {
@@ -114,6 +115,29 @@ export async function loadBookCard(libraryRoot: string, slug: string): Promise<P
   }
   const text = localStorage.getItem(`marginalia:${path}`);
   return text ? parseBookCardYaml(text) : null;
+}
+
+export async function updateBookCardAuthor(
+  libraryRoot: string,
+  slug: string,
+  author: string,
+): Promise<void> {
+  const card = (await loadBookCard(libraryRoot, slug)) ?? {
+    title: slug,
+    author: "",
+    sha256: "",
+    path: "",
+    updated: "",
+  };
+  const now = new Date().toISOString();
+  const body = `---\n\ntitle: ${JSON.stringify(card.title)}\nauthor: ${JSON.stringify(author.trim())}\nsha256: ${card.sha256}\npath: ${JSON.stringify(card.path)}\nupdated: ${now}\n\n`;
+  const path = bookCardPath(libraryRoot, slug);
+  if (isTauri()) {
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+    await writeTextFile(path, body);
+    return;
+  }
+  localStorage.setItem(`marginalia:${path}`, body);
 }
 
 export async function updateBookCardPath(libraryRoot: string, slug: string, newPath: string): Promise<void> {
@@ -168,7 +192,7 @@ export async function readBookBytes(
     const bytes = await readFile(storedPath);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
-  const ext = storedPath.match(/\.(pdf|epub)$/i)?.[0]?.toLowerCase() ?? ".pdf";
+  const ext = storedPath.match(/\.(pdf|epub|mobi|azw3?)$/i)?.[0]?.toLowerCase() ?? ".pdf";
   const b64 = localStorage.getItem(binaryStorageKey(slug, ext));
   if (!b64) return null;
   const bin = atob(b64);

@@ -80,8 +80,9 @@ test.describe("wikilinks — chybějící cíl", () => {
     });
     await page.locator('.nav-item[data-route="notes"]').click();
     await page.getByRole("button", { name: "Otevřené otázky" }).click();
-    await expect(page.locator('.preview-root a.wiki-link.missing[data-wiki-title="Neexistující pojem"]')).toBeVisible();
-    await page.locator('.preview-root a.wiki-link.missing[data-wiki-title="Neexistující pojem"]').click();
+    const missing = page.locator(".cm-wiki-link.missing", { hasText: "Neexistující pojem" });
+    await expect(missing).toBeVisible();
+    await missing.dblclick();
     await expect(page.getByRole("button", { name: "Neexistující pojem" })).toBeVisible({ timeout: 15_000 });
   });
 });

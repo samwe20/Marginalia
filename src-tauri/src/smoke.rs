@@ -175,7 +175,10 @@ pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
     let mut best = String::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry.name().to_lowercase();
+        let name = entry
+            .name()
+            .map_err(|e| e.to_string())?
+            .to_ascii_lowercase();
         if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
             continue;
         }
@@ -199,6 +202,22 @@ pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
         return Err("fixture epub has no readable text".into());
     }
     Ok(best.chars().take(240).collect())
+}
+
+/// CI: read a UTF-8 file under the smoke library (e.g. `knihy/<slug>.md`, `citace/...`).
+#[tauri::command]
+pub fn smoke_read_library_text(library_root: String, relative_path: String) -> Result<String, String> {
+    if !smoke_mode() {
+        return Err("Smoke mode is disabled".into());
+    }
+    if relative_path.contains("..") || relative_path.starts_with('/') || relative_path.starts_with('\\') {
+        return Err("relative_path must stay inside library".into());
+    }
+    let path = std::path::Path::new(&library_root).join(&relative_path);
+    if !path.starts_with(&library_root) {
+        return Err("path escapes library root".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

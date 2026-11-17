@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { prepareWebLibrary } from "./helpers";
+import { expectPdfReaderTextReady, prepareWebLibrary } from "./helpers";
 
 const fixtures = join(process.cwd(), "tests", "fixtures");
 
@@ -12,7 +12,7 @@ test.describe("open book (web build)", () => {
 
   test("PDF má interaktivní textLayer po otevření", async ({ page }) => {
     await page.locator("#file-open").setInputFiles(join(fixtures, "sample.pdf"));
-    await expect(page.locator("#pdf-root .textLayer")).toBeVisible({ timeout: 60_000 });
+    await expectPdfReaderTextReady(page);
     await expect(page.locator("#pdf-root .textLayer span")).not.toHaveCount(0);
     const selectable = await page.evaluate(() => {
       const span = document.querySelector("#pdf-root .textLayer span") as HTMLElement | null;
