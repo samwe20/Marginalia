@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Same as marginalia-icon.svg but without backlink — for legibility at ≤16px taskbar/title sizes. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <clipPath id="page-clip-small">
+      <path
+        d="M 272 196
+           H 732
+           Q 760 196 760 224
+           V 756
+           Q 760 784 732 784
+           H 520
+           L 472 832
+           H 272
+           Q 244 832 244 804
+           V 224
+           Q 244 196 272 196 Z"
+      />
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="#30436d" />
+
+  <path
+    fill="#ffffff"
+    d="M 272 196
+       H 732
+       Q 760 196 760 224
+       V 700
+       L 688 772
+       H 520
+       L 472 832
+       H 272
+       Q 244 832 244 804
+       V 224
+       Q 244 196 272 196 Z"
+  />
+  <path fill="#e5e7eb" d="M 688 772 L 760 700 L 760 772 L 712 820 Z" />
+
+  <g clip-path="url(#page-clip-small)">
+    <rect x="312" y="388" width="400" height="28" rx="14" fill="#a8adb3" />
+  </g>
+  <g clip-path="url(#page-clip-small)" opacity="0.68">
+    <rect x="296" y="458" width="432" height="56" rx="12" fill="#fef08a" />
+  </g>
+  <g clip-path="url(#page-clip-small)">
+    <rect x="312" y="474" width="400" height="28" rx="14" fill="#a8adb3" />
+    <rect x="312" y="560" width="400" height="28" rx="14" fill="#a8adb3" />
+  </g>
+</svg>
