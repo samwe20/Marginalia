@@ -6,7 +6,9 @@
   ${If} $R0 != ""
     DetailPrint "Clean install: running the previous ${PRODUCTNAME} uninstaller."
     ClearErrors
-    ExecWait '$R0 /S /DELETEAPPDATA' $R1
+    ; `_?=` keeps NSIS in the registered install directory, so ExecWait waits
+    ; for the real uninstaller instead of only its temporary launcher process.
+    ExecWait '$R0 /S /DELETEAPPDATA _?=$INSTDIR' $R1
     ${If} ${Errors}
     ${OrIf} $R1 != 0
       Abort "Previous ${PRODUCTNAME} installation could not be removed (exit $R1)."
