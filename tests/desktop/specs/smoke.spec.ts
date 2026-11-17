@@ -669,6 +669,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
   it("S02 theme system/light/dark", async () => {
     try {
       await $('[data-route="settings"]').click();
+      await browser.waitUntil(async () => (await $$('[data-theme-pref]')).length >= 3, {
+        timeout: 15_000,
+        timeoutMsg: "theme prefs missing on settings",
+      });
       await browser.pause(400);
       for (const pref of ["system", "light", "dark"] as const) {
         await $(`[data-theme-pref="${pref}"]`).click();
@@ -879,15 +883,15 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const load = await $("#btn-demo-load");
       if (await load.isEnabled()) await load.click();
       await browser.pause(800);
-      await $('[data-route="search"]').click();
+      // Sidebar Hledat removed — search lives on Citace / Knihovna / Poznámky.
+      await $('[data-route="quotes"]').click();
       await browser.pause(400);
-      const input = await $("#search-input");
+      const input = await $("#quotes-filter");
       await input.setValue("Tolstoj");
-      await $("#btn-search-run").click();
-      await browser.pause(1200);
-      const hits = await $("#search-results .quote-db-card, #search-results .search-note-card");
+      await browser.pause(600);
+      const hits = await $(".quote-db-card, .user-quote-list .quote-card, .quote-list .quote-card");
       await expect(hits).toBeDisplayed();
-      record("S09", "Search finds quote/note", true, "demo index hit");
+      record("S09", "Search finds quote/note", true, "quotes page filter hit");
     } catch (e) {
       record("S09", "Search finds quote/note", false, String(e));
       throw e;
@@ -1849,7 +1853,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(400);
       await $("#btn-new-note").click();
       await browser.pause(400);
-      const titleInput = await $(".notes-title-input");
+      const titleInput = await $(".note-title-input, #note-title");
       await titleInput.click();
       await browser.keys(["Control", "a"]);
       await browser.keys(noteTitle.split(""));

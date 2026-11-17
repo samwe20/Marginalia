@@ -9,14 +9,11 @@ test.describe("search notes", () => {
     if (await load.isEnabled()) await load.click();
   });
 
-  test("demo poznámka v hledání (Folio)", async ({ page }) => {
-    await page.locator('.nav-item[data-route="search"]').click();
-    const input = page.locator("#search-input");
-    await input.fill("esej");
-    await input.press("Enter");
-    await expect(page.locator(".search-note-list .search-note-card")).toHaveCount(1, { timeout: 10_000 });
-    await expect(page.locator(".search-note-card__title")).toContainText("Esej");
-    await page.locator('[data-demo-note="demo-note-essay"]').click();
+  test("demo poznámka ve filtru Poznámek (Folio)", async ({ page }) => {
+    await page.locator('.nav-item[data-route="notes"]').click();
     await expect(page.locator(".notes-layout")).toBeVisible();
+    const input = page.locator("#notes-filter");
+    await input.fill("esej");
+    await expect(page.locator(".note-list-item")).toContainText(/Esej/i, { timeout: 10_000 });
   });
 });
