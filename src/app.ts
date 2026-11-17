@@ -44,7 +44,7 @@ import {
   recordFolderPickerInvocation,
   resetFolderPickerInvocationCount,
 } from "./lib/library-root-telemetry";
-import { createBlankNote, saveNote } from "./lib/notes";
+import { createNote } from "./lib/notes";
 import { renderUserQuoteCardHtml } from "./ui/user-quote-card";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
@@ -1337,12 +1337,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     verifyDialogPlugin: smokeVerifyDialogPlugin,
     seedWikilinkBacklink: async () => {
       if (!(await requireLibraryConfigured())) throw new Error("No library root");
-      const targetTitle = "Smoke cíl";
-      const target = createBlankNote(targetTitle);
-      await saveNote(state.libraryRoot, target);
-      const source = createBlankNote("Smoke zdroj");
-      source.body = `Odkaz na [[${targetTitle}]].\n`;
-      await saveNote(state.libraryRoot, source);
+      const target = await createNote(state.libraryRoot, "Smoke cíl");
+      const targetTitle = target.title;
+      await createNote(state.libraryRoot, "Smoke zdroj", `Odkaz na [[${targetTitle}]].\n`);
       await reindexLinks();
       const backlinks = linkIndex.getBacklinks(noteIndexPath(target.filename));
       return { targetTitle, backlinkCount: backlinks.length };

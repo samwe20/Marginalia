@@ -1327,4 +1327,77 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   }).timeout(600_000);
+
+  it("S27 poznámky: 3× Nová nic nepřepíše, přejmenování, vše přežije restart", async () => {
+    const stamp = Date.now().toString(36);
+    const listFilenames = async () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map((el) => el.dataset.noteFilename ?? ""),
+      );
+    const openNotes = async () => {
+      await $('[data-route="notes"]').click();
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
+    };
+    const created: { filename: string; text: string }[] = [];
+    try {
+      await openNotes();
+      for (let i = 1; i <= 3; i += 1) {
+        const before = await listFilenames();
+        await $("#btn-new-note").click();
+        await browser.waitUntil(async () => (await listFilenames()).length === before.length + 1, {
+          timeout: 15_000,
+          timeoutMsg: `note ${i} did not appear in the list`,
+        });
+        const filename = (await listFilenames()).find((f) => !before.includes(f));
+        if (!filename) throw new Error(`note ${i}: new filename missing`);
+        const text = `Obsah poznámky ${i} ${stamp}`;
+        await $(".cm-content").click();
+        await browser.keys(["End"]);
+        await browser.keys(text.split(""));
+        await browser.pause(1500);
+        created.push({ filename, text });
+      }
+      const names = created.map((c) => c.filename);
+      if (new Set(names).size !== 3) throw new Error(`notes share a file: ${names.join(", ")}`);
+
+      const renamedTitle = `Smoke přejmenovaná ${stamp}`;
+      await $(`[data-note-filename="${created[1].filename}"]`).click();
+      await browser.pause(800);
+      await $("#note-title").setValue(renamedTitle);
+      await browser.keys(["Enter"]);
+      await browser.waitUntil(async () => (await listFilenames()).includes(`${renamedTitle}.md`), {
+        timeout: 15_000,
+        timeoutMsg: "renamed note not in the list",
+      });
+      const oldName = created[1].filename;
+      created[1].filename = `${renamedTitle}.md`;
+
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await openNotes();
+      const after = await listFilenames();
+      if (after.includes(oldName)) throw new Error(`old filename still present after rename: ${oldName}`);
+      const disk: Record<string, string> = {};
+      for (const c of created) {
+        if (!after.includes(c.filename)) throw new Error(`after restart missing in list: ${c.filename}`);
+        const md = await readLibraryText(`poznamky/${c.filename}`);
+        if (!md.includes(c.text)) throw new Error(`after restart ${c.filename} lost its text: ${md.slice(0, 200)}`);
+        const expectedTitle = c.filename.replace(/\.md$/, "");
+        if (!md.includes(`title: ${JSON.stringify(expectedTitle)}`)) {
+          throw new Error(`${c.filename}: frontmatter title is not "${expectedTitle}"`);
+        }
+        disk[c.filename] = md.length + " B";
+      }
+      await $(`[data-note-filename="${created[1].filename}"]`).click();
+      await browser.pause(800);
+      await saveScreenshot("smoke-notes-three-after-restart.png");
+      record("S27", "Poznámky: 3× Nová, přejmenování, restart", true, JSON.stringify({ disk, oldName }));
+    } catch (e) {
+      record("S27", "Poznámky: 3× Nová, přejmenování, restart", false, `${String(e)} ${JSON.stringify(created)}`);
+      throw e;
+    }
+  }).timeout(300_000);
 });
