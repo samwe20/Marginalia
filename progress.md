@@ -25,10 +25,9 @@ Branch: `cursor/integration-all-d744` · base: `develop` · **do not merge**
 - `fad8a88` — chevron meta collapse + S39
 - `2cc0b4d` — backlinks, dedupe, delete, filters, stress CI, S40–S43
 - `e3b4808` — temporary softened S27 wait (superseded)
-- _(pending push)_ — sync notes loading shell + destroy readers on leave + restore strict S27
+- `631fe7c` — sync notes loading shell + destroy readers on leave + restore strict S27
 
 ## Next
 
-1. Push S27 root fix.
-2. Wait for green `windows-installed-smoke` (S27 + S39–S43) → exe release.
-3. Collect `windows-installed-stress` metrics table into this file.
+1. Wait for green `windows-installed-smoke` on `631fe7c` (S27 + S39–S43) → exe.
+2. Collect `windows-installed-stress` metrics table into this file.
