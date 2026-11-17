@@ -538,11 +538,29 @@ async function waitViewportVisibleText(minChars: number, timeoutMs: number): Pro
 }
 
 async function goLibrary() {
+  const leaveReader = async () => {
+    const back = await $("#btn-back-library");
+    if (await back.isExisting()) {
+      await back.click();
+      await browser.pause(300);
+    }
+  };
+  await leaveReader();
   await $('[data-route="library"]').click();
-  await browser.waitUntil(async () => (await $("[data-library-ready='1']").isExisting()), {
-    timeout: 20_000,
-    timeoutMsg: "library page not ready",
-  });
+  try {
+    await browser.waitUntil(async () => (await $("[data-library-ready='1']").isExisting()), {
+      timeout: 12_000,
+      timeoutMsg: "library page not ready",
+    });
+  } catch {
+    // Reading-mode / mid-render: leave reader again and re-click Knihovna.
+    await leaveReader();
+    await $('[data-route="library"]').click();
+    await browser.waitUntil(async () => (await $("[data-library-ready='1']").isExisting()), {
+      timeout: 20_000,
+      timeoutMsg: "library page not ready after retry",
+    });
+  }
   await browser.pause(300);
 }
 
@@ -556,12 +574,18 @@ async function openQuotesTab() {
 
 async function openPdfFromLibraryCard() {
   await goLibrary();
-  await browser.waitUntil(
-    async () =>
-      (await $("[data-library-ready='1']").isExisting()) &&
-      (await $$('.book-card[data-kind="pdf"]:not(.book-card--demo)')).length > 0,
-    { timeout: 20_000, timeoutMsg: "library PDF card not ready" },
-  );
+  const waitPdfCards = async () =>
+    browser.waitUntil(
+      async () => (await $$('.book-card[data-kind="pdf"]:not(.book-card--demo)')).length > 0,
+      { timeout: 12_000, timeoutMsg: "library PDF card not ready" },
+    );
+  try {
+    await waitPdfCards();
+  } catch {
+    await callSmokeApi("rescanBooksFromFolder");
+    await goLibrary();
+    await waitPdfCards();
+  }
   const card = await $('.book-card[data-kind="pdf"]:not(.book-card--demo)');
   await expect(card).toBeDisplayed();
   await card.click();
@@ -1806,14 +1830,24 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         });
         await callSmokeApi("rescanBooksFromFolder");
         await goLibrary();
+        await browser.waitUntil(
+          async () =>
+            (await browser.execute(() =>
+              Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="pdf"]')).some((c) =>
+                /verse|nietzsche|indent/i.test(`${c.dataset.title ?? ""} ${c.textContent ?? ""}`),
+              ),
+            )) === true,
+          { timeout: 20_000, timeoutMsg: "verse PDF card missing after stage/rescan" },
+        );
         const opened = await browser.execute(() => {
           const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="pdf"]')).find((c) =>
-            /verse|nietzsche/i.test(c.textContent ?? ""),
+            /verse|nietzsche|indent/i.test(`${c.dataset.title ?? ""} ${c.textContent ?? ""}`),
           );
           card?.click();
           return Boolean(card);
         });
         if (!opened) await openPdfFromLibraryCard();
+        else await waitPdfTextReady();
       } else {
         await openPdfFromLibraryCard();
       }
@@ -1821,8 +1855,17 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
       const before = (await quoteFilesOnDisk(slug)).length;
       // Real mouse drag across multiple lines in the text layer
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(() => {
+            const layer = document.querySelector("#pdf-root .textLayer");
+            if (!layer) return 0;
+            return Array.from(layer.querySelectorAll("span")).filter((s) => (s.textContent ?? "").trim()).length;
+          })) >= 2,
+        { timeout: 30_000, timeoutMsg: "PDF textLayer spans not ready for multi-line drag" },
+      );
       const drag = await browser.execute(() => {
-        const layer = document.querySelector(".textLayer") as HTMLElement | null;
+        const layer = document.querySelector("#pdf-root .textLayer") as HTMLElement | null;
         if (!layer) return null;
         const spans = Array.from(layer.querySelectorAll("span")).filter((s) => (s.textContent ?? "").trim());
         if (spans.length < 2) return null;
