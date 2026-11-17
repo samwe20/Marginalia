@@ -12,7 +12,7 @@
 
 - Job **`windows-develop-release`** publikuje `develop-latest` **jen na push do `develop`**, pokud smoke projde.
 
-- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S00–S31).
+- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S00–S38).
 
 ## Příkazy lokálně (Windows)
 
@@ -53,6 +53,13 @@ Výstupy: `test-results/desktop-smoke/` (screenshoty, `smoke-results.json`).
 | S27–S29 | Poznámky rename / highlight restore / single editor | Folio editor + overlay |
 | S30 | Bibliografie + copy citation | panel + `knihy/<slug>.md` |
 | S31 | Cover cache po restartu | `.book-card__cover-image` / typographic |
+| S32 | Obálky po open/close | žádný broken `<img>` |
+| S33 | PDF multi-line highlight + mezery | mouse drag + H |
+| S34 | Bibliografie → staré citace | živý title/author |
+| S35 | `[[wikilink]]` v poznámce k citaci | klik + backlink |
+| S36 | Tmavý režim obsahu EPUB/MOBI | ne bílá stránka |
+| S37 | Kontinuální scroll MOBI | scrolled cross-section |
+| S38 | Bez sidebar Hledat | pole na Knihovna/Citace |
 
 **S15/S19 citace musí vzniknout reálným mouse drag + H** (ne `createEpubQuoteFromSelection` / `prepareEpubTextSelection` fallback). Rust invoke slouží k ověření souborů na disku (`smoke_list_quote_files`, `smoke_read_library_text`).
 

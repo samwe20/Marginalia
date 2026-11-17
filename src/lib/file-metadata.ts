@@ -16,15 +16,24 @@ function textValue(v: unknown): string {
 }
 
 function splitContributorName(name: string): BibliographyAuthor {
-  const raw = name.trim();
+  const raw = name.trim().replace(/\s+/g, " ");
   if (!raw) return { family: "", given: "" };
   if (raw.includes(",")) {
     const [family, given] = raw.split(",", 2).map((s) => s.trim());
     return { family: family || "", given: given || "" };
   }
-  const tokens = raw.split(/\s+/);
+  const tokens = raw.split(" ");
   if (tokens.length === 1) return { family: tokens[0]!, given: "" };
+  // "William Shakespeare" → given William, family Shakespeare (display: William Shakespeare)
   return { family: tokens[tokens.length - 1]!, given: tokens.slice(0, -1).join(" ") };
+}
+
+/** Prefer the longer, more complete creator string from foliate metadata variants. */
+export function pickBestCreatorName(...candidates: (string | undefined | null)[]): string {
+  const cleaned = candidates.map((c) => (c ?? "").trim()).filter(Boolean);
+  if (!cleaned.length) return "";
+  cleaned.sort((a, b) => b.length - a.length);
+  return cleaned[0]!;
 }
 
 function contributorsToAuthors(list: unknown): BibliographyAuthor[] {
@@ -49,7 +58,13 @@ export function mapFoliateMetadata(metadata: unknown): ExtractedBibliography {
   const m = metadata as Record<string, unknown>;
   const title = textValue(m.title);
   const subtitle = textValue(m.subtitle);
-  const authors = contributorsToAuthors(m.author);
+  const authorRaw = pickBestCreatorName(
+    textValue(m.author),
+    textValue((m as { creator?: unknown }).creator),
+    Array.isArray(m.author) ? textValue((m.author[0] as { name?: unknown })?.name) : "",
+    Array.isArray(m.author) ? textValue((m.author[0] as { sortAs?: unknown })?.sortAs) : "",
+  );
+  const authors = contributorsToAuthors(authorRaw || m.author);
   const translatorList = (m.translator as unknown) ?? filterContributorRole(m, "trl");
   const editorList = (m.editor as unknown) ?? filterContributorRole(m, "edt");
   const publisher = textValue(

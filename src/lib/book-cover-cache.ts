@@ -78,12 +78,32 @@ export async function coverFileExists(libraryRoot: string, slug: string, custom 
   return localStorage.getItem(`marginalia:coverbin:${slug}${custom ? ":custom" : ""}`) != null;
 }
 
+async function pngPathToDataUrl(path: string): Promise<string | null> {
+  try {
+    if (isTauri()) {
+      const { readFile, exists } = await import("@tauri-apps/plugin-fs");
+      if (!(await exists(path))) return null;
+      const bytes = await readFile(path);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return `data:image/png;base64,${btoa(binary)}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export async function coverImageUrl(libraryRoot: string, slug: string): Promise<string | null> {
+  // Prefer data: URLs so covers survive route changes (asset:// can break after reader open/close).
   if (await coverFileExists(libraryRoot, slug, true)) {
     const path = coverCustomPath(libraryRoot, slug);
     if (isTauri()) {
-      const { convertFileSrc } = await import("@tauri-apps/api/core");
-      return convertFileSrc(path);
+      const data = await pngPathToDataUrl(path);
+      if (data) return data;
     }
     const b64 = localStorage.getItem(`marginalia:coverbin:${slug}:custom`);
     return b64 ? `data:image/png;base64,${b64}` : null;
@@ -93,8 +113,8 @@ export async function coverImageUrl(libraryRoot: string, slug: string): Promise<
   if (!(await coverFileExists(libraryRoot, slug, false))) return null;
   const path = coverCachePath(libraryRoot, slug);
   if (isTauri()) {
-    const { convertFileSrc } = await import("@tauri-apps/api/core");
-    return convertFileSrc(path);
+    const data = await pngPathToDataUrl(path);
+    if (data) return data;
   }
   const b64 = localStorage.getItem(`marginalia:coverbin:${slug}`);
   return b64 ? `data:image/png;base64,${b64}` : null;

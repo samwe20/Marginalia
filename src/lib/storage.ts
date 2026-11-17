@@ -145,6 +145,30 @@ export async function saveQuote(
   return { doc, relativePath: path };
 }
 
+
+/** Rewrite live book title/author onto every quote file for a slug (bibliography sync). */
+export async function syncQuotesBookMeta(
+  libraryRoot: string,
+  slug: string,
+  meta: { title: string; author: string },
+): Promise<number> {
+  const docs = await loadQuotesForBook(libraryRoot, slug);
+  let n = 0;
+  for (const doc of docs) {
+    const title = meta.title.trim();
+    const author = meta.author.trim();
+    if (doc.meta.book_title === title && doc.meta.author === author) continue;
+    doc.meta.book_title = title || doc.meta.book_title;
+    doc.meta.author = author || doc.meta.author;
+    doc.meta.updated = new Date().toISOString();
+    const path = quotePath(libraryRoot, slug, doc.meta.id);
+    await writeText(path, formatQuoteMarkdown(doc));
+    await indexUpsert(doc, path);
+    n += 1;
+  }
+  return n;
+}
+
 export async function loadAllQuotesFromLibrary(libraryRoot: string): Promise<QuoteDocument[]> {
   if (!libraryRoot) return [];
   const root = `${libraryRoot}/${LIBRARY_SUBDIRS.quotes}`;
