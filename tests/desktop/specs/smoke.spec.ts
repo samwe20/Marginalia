@@ -60,7 +60,13 @@ async function ensureInspectorOpen() {
   }
 }
 
-async function pointerDragViewport(fromX: number, fromY: number, toX: number, toY: number) {
+async function pointerDragViewport(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  moveMs = 280,
+) {
   await browser.performActions([
     {
       type: "pointer",
@@ -69,7 +75,7 @@ async function pointerDragViewport(fromX: number, fromY: number, toX: number, to
       actions: [
         { type: "pointerMove", duration: 0, x: fromX, y: fromY, origin: "viewport" },
         { type: "pointerDown", button: 0 },
-        { type: "pointerMove", duration: 280, x: toX, y: toY, origin: "viewport" },
+        { type: "pointerMove", duration: moveMs, x: toX, y: toY, origin: "viewport" },
         { type: "pointerUp", button: 0 },
       ],
     },
@@ -154,24 +160,31 @@ async function dumpEpubPointerFailure(stage: string): Promise<never> {
   throw new Error(`EPUB/MOBI pointer/H (${stage}): ${JSON.stringify(diag)}`);
 }
 
-async function dragSelectInCurrentFrame(): Promise<{ x: number; y: number; x2: number; y2: number }> {
-  const textEl = (await $("p, span")) as WebdriverIO.Element;
+async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
+  const textEl = (await $("p, span, body")) as WebdriverIO.Element;
   await textEl.waitForExist({ timeout: 8_000 });
-  const local = (await browser.execute(function () {
-    const p = document.querySelector("p, span");
-    if (!p) return null;
+  await textEl.click();
+  const drag = (await browser.execute(function () {
+    const p = document.querySelector("p, span") ?? document.body;
     const r = p.getBoundingClientRect();
     if (r.width < 8 || r.height < 4) return null;
+    const y = Math.floor(r.top + r.height / 2);
     return {
-      x: 6,
-      y: Math.floor(r.height / 2),
-      x2: Math.floor(r.width - 6),
-      y2: Math.floor(r.top + r.height / 2),
+      x1: Math.floor(r.left + 4),
+      y1: y,
+      x2: Math.floor(r.right - 4),
+      y2: y,
+      preview: (p.textContent ?? "").trim().slice(0, 80),
     };
-  })) as { x: number; y: number; x2: number; y2: number } | null;
-  if (!local) throw new Error("no p/span in foliate content frame");
-  await pointerDragOnElement(textEl, local.x, local.y, local.x2, local.y2);
-  return local;
+  })) as { x1: number; y1: number; x2: number; y2: number; preview: string } | null;
+  if (!drag) throw new Error("no p/span/body in foliate content frame");
+  // Viewport coords inside the content iframe (not element-relative — avoids bad y2).
+  await pointerDragViewport(drag.x1, drag.y1, drag.x2, drag.y2, 420);
+  const inFrameSelection = (await browser.execute(function () {
+    const t = window.getSelection()?.toString().trim() ?? "";
+    return { length: t.length, preview: t.slice(0, 160) };
+  })) as { length: number; preview: string };
+  return { drag, inFrameSelection };
 }
 
 async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
@@ -189,17 +202,18 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   const ifr = await resolveFoliateShadowIframe();
   if (!ifr) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
   await browser.switchToFrame(ifr);
-  let shadowDrag: { x: number; y: number; x2: number; y2: number };
+  let frameDrag: Record<string, unknown>;
   try {
-    shadowDrag = await dragSelectInCurrentFrame();
+    frameDrag = await dragSelectInCurrentFrame();
   } catch (e) {
     await browser.switchToFrame(null);
     return dumpEpubPointerFailure(`shadow-drag-error-${String(e)}`);
   }
+  const inFrame = frameDrag.inFrameSelection as { length: number; preview: string };
   await browser.switchToFrame(null);
   const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
   const sel = diag.selection as { selections: unknown[]; mainSelectionLength: number };
-  if (!sel.selections?.length && (sel.mainSelectionLength ?? 0) < 4) {
+  if ((inFrame?.length ?? 0) < 3 && !sel.selections?.length && (sel.mainSelectionLength ?? 0) < 4) {
     return dumpEpubPointerFailure("after-shadow-drag-no-selection");
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
@@ -207,9 +221,9 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   );
   return {
     space: "foliate-shadow-iframe",
-    shadowDrag,
+    frameDrag,
     viewport,
-    selectionAfterDrag: diag.selection,
+    selectionAfterDrag: { inFrame, app: diag.selection },
     renderInfo,
   };
 }

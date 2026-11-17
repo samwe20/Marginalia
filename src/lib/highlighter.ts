@@ -111,16 +111,37 @@ export function attachHighlighter(
     }
   };
 
+  const asPointer =
+    (ev: MouseEvent): PointerEvent =>
+      ({
+        ...ev,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true,
+        pressure: 0.5,
+        buttons: ev.buttons,
+      }) as PointerEvent;
+
+  const onMouseDown = (ev: MouseEvent) => onPointerDown(asPointer(ev));
+  const onMouseMove = (ev: MouseEvent) => onPointerMove(asPointer(ev));
+  const onMouseUp = (ev: MouseEvent) => onPointerUp(asPointer(ev));
+
   root.addEventListener("pointerdown", onPointerDown);
   root.addEventListener("pointermove", onPointerMove);
   root.addEventListener("pointerup", onPointerUp);
   root.addEventListener("pointercancel", onPointerUp);
+  root.addEventListener("mousedown", onMouseDown);
+  root.addEventListener("mousemove", onMouseMove);
+  root.addEventListener("mouseup", onMouseUp);
 
   const detach = () => {
     root.removeEventListener("pointerdown", onPointerDown);
     root.removeEventListener("pointermove", onPointerMove);
     root.removeEventListener("pointerup", onPointerUp);
     root.removeEventListener("pointercancel", onPointerUp);
+    root.removeEventListener("mousedown", onMouseDown);
+    root.removeEventListener("mousemove", onMouseMove);
+    root.removeEventListener("mouseup", onMouseUp);
     clearPending();
   };
 
