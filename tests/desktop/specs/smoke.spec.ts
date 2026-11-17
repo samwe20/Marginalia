@@ -95,50 +95,16 @@ async function pointerSelectPdfText(): Promise<void> {
 }
 
 async function pointerSelectEpubText(): Promise<void> {
-  const rect = (await browser.execute(function () {
-    var roots = [];
-    var stack = [document.querySelector("#epub-root")];
-    while (stack.length) {
-      var root = stack.pop();
-      if (!root) continue;
-      roots.push(root);
-      var owned = root.querySelectorAll ? root.querySelectorAll("*") : [];
-      for (var o = 0; o < owned.length; o++) {
-        if (owned[o].shadowRoot) stack.push(owned[o].shadowRoot);
-      }
-    }
-    for (var r = 0; r < roots.length; r++) {
-      var iframes = roots[r].querySelectorAll ? roots[r].querySelectorAll("iframe") : [];
-      for (var f = 0; f < iframes.length; f++) {
-        try {
-          var doc = iframes[f].contentDocument;
-          if (doc) roots.push(doc);
-        } catch {
-          /* cross-origin */
-        }
-      }
-    }
-    for (var ri = 0; ri < roots.length; ri++) {
-      var nodes = roots[ri].querySelectorAll ? roots[ri].querySelectorAll("p, span") : [];
-      for (var ni = 0; ni < nodes.length; ni++) {
-        var el = nodes[ni];
-        var text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (text.length < 8) continue;
-        if (text.indexOf("Marginalia") < 0 && text.indexOf("fixture") < 0 && text.indexOf("paragraph") < 0) {
-          continue;
-        }
-        var box = el.getBoundingClientRect();
-        if (box.width < 8 || box.height < 4) continue;
-        return {
-          x: Math.floor(box.left + 6),
-          y: Math.floor(box.top + box.height / 2),
-          x2: Math.floor(box.right - 6),
-          y2: Math.floor(box.top + box.height / 2),
-        };
-      }
-    }
-    return null;
-  })) as { x: number; y: number; x2: number; y2: number } | null;
+  await callSmokeApi<number>("ensureEpubReaderReady");
+  let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+    "epubPointerSelectionRect",
+  );
+  if (!rect) {
+    await callSmokeApi<number>("ensureEpubReaderReady");
+    rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+      "epubPointerSelectionRect",
+    );
+  }
   if (!rect) throw new Error("EPUB/MOBI text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
@@ -741,7 +707,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await openPdfFromLibraryCard();
       await ensureInspectorOpen();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
-      const scrollSecond = await browser.execute(function scrollPdfSecondPage() {
+      const scrollSecond = await browser.execute(function () {
         const surface = document.querySelector(".reader-surface");
         const pages = document.querySelectorAll("#pdf-root .pdf-page");
         if (!surface || pages.length < 2) return false;
@@ -760,7 +726,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         { timeout: 15_000, timeoutMsg: "page counter not on 2/2" },
       );
       const before = (await quoteFilesOnDisk(slug)).length;
-      const rect = (await browser.execute(function selectPdfPageTwoText() {
+      const rect = (await browser.execute(function () {
         const layers = document.querySelectorAll("#pdf-root .textLayer");
         if (layers.length < 2) return null;
         const span = layers[1].querySelector("span");

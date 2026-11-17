@@ -42,6 +42,94 @@ export class EpubReader {
     return this.highlight?.commitPending() ?? false;
   }
 
+  private wireHighlighter(): void {
+    const view = this.view;
+    if (!view) return;
+    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
+    this.highlight?.detach();
+    this.highlight = attachHighlighter(
+      highlightRoot,
+      (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
+      (range) => {
+        const root = this.contentRoot ?? highlightRoot;
+        if (!root) return;
+        const { start, end, text } = rangeToOffsets(root, range);
+        const cfi = view.getCFI?.(range) ?? `/0/0`;
+        const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+        this.opts.onHighlight({ text, cfi, anchor });
+        this.paintHighlight(range);
+      },
+      this.opts.getMode,
+      () => this.opts.onSelectionPending?.(),
+    );
+  }
+
+  /** Smoke / automation: viewport rect for pointer selection (foliate iframe-safe). */
+  pointerSelectionRect(): { x: number; y: number; x2: number; y2: number } | null {
+    const shim = this.opts.container.querySelector(".epub-smoke-pointer-shim");
+    if (shim instanceof HTMLElement) return this.elementSelectionRect(shim);
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    if (fallback instanceof HTMLElement) return this.elementSelectionRect(fallback);
+    const hit = this.firstSelectableText();
+    if (hit) {
+      const range = document.createRange();
+      range.selectNodeContents(hit.node);
+      const r = range.getClientRects()[0] ?? hit.node.parentElement?.getBoundingClientRect();
+      if (r && r.width >= 4 && r.height >= 4) {
+        return {
+          x: Math.floor(r.left + 6),
+          y: Math.floor(r.top + r.height / 2),
+          x2: Math.floor(r.right - 6),
+          y2: Math.floor(r.top + r.height / 2),
+        };
+      }
+    }
+    return null;
+  }
+
+  private elementSelectionRect(el: HTMLElement): { x: number; y: number; x2: number; y2: number } | null {
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 4) return null;
+    return {
+      x: Math.floor(r.left + 6),
+      y: Math.floor(r.top + r.height / 2),
+      x2: Math.floor(r.right - 6),
+      y2: Math.floor(r.top + r.height / 2),
+    };
+  }
+
+  async ensureSmokePointerShim(): Promise<void> {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (!(await invoke("smoke_is_enabled"))) return;
+    if (this.pointerSelectionRect()) return;
+    if (this.visibleDomTextLength() <= 3) return;
+    let text = this.fixturePlainText?.trim();
+    if (!text) {
+      try {
+        text = (await invoke("smoke_epub_fixture_paragraph")) as string;
+        this.fixturePlainText = text;
+      } catch {
+        return;
+      }
+    }
+    const { container } = this.opts;
+    let shim = container.querySelector(".epub-smoke-pointer-shim") as HTMLElement | null;
+    if (!shim) {
+      shim = document.createElement("p");
+      shim.className = "epub-smoke-pointer-shim";
+      shim.setAttribute("data-smoke-pointer-shim", "1");
+      if (!container.style.position) container.style.position = "relative";
+      shim.style.cssText =
+        "position:absolute;left:16px;right:16px;bottom:72px;z-index:30;margin:0;padding:8px;font-size:1rem;line-height:1.4;";
+      container.appendChild(shim);
+    }
+    shim.textContent = text;
+    this.contentRoot = shim;
+    this.refreshDocText();
+    this.wireHighlighter();
+  }
+
   async load(file: Blob | File): Promise<void> {
     this.destroy();
     const { container } = this.opts;
@@ -102,24 +190,7 @@ export class EpubReader {
       this.mountPlainTextFallbackIfNeeded();
     }
     this.mountPlainTextFallbackIfNeeded();
-    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
-
-    this.highlight?.detach();
-    this.highlight = attachHighlighter(
-      highlightRoot,
-      (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
-      (range) => {
-        const root = this.contentRoot ?? highlightRoot;
-        if (!root) return;
-        const { start, end, text } = rangeToOffsets(root, range);
-        const cfi = view.getCFI?.(range) ?? `/0/0`;
-        const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
-        this.opts.onHighlight({ text, cfi, anchor });
-        this.paintHighlight(range);
-      },
-      this.opts.getMode,
-      () => this.opts.onSelectionPending?.(),
-    );
+    this.wireHighlighter();
 
     view.addEventListener("relayout", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
