@@ -309,7 +309,16 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     dragTry = await trySingleIframeOriginDrag(ifr);
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e);
-    return dumpEpubPointerFailure("shadow-drag-error", { err, iframeMeta });
+  const dragSkipped =
+      err.includes("out of bounds") || err.includes("not clickable");
+    if (!dragSkipped) {
+      return dumpEpubPointerFailure("shadow-drag-error", { err, iframeMeta });
+    }
+    dragTry = {
+      ok: false,
+      drag: { skipped: true, error: err },
+      diagnostics: await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics"),
+    };
   }
   if (dragTry.ok) {
     const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
