@@ -2,91 +2,100 @@
 
 # Marginalia
 
-**Samostatná aplikace pro Windows** — čtení knih (PDF, EPUB), citace, poznámky a propojování přes `[[wikilinky]]` ve stylu [Folio](https://github.com/samwe20/Folio) / Obsidian.
+**A Windows desktop app** for reading books (PDF, EPUB), saving quotes, writing notes, and linking ideas with `[[wiki links]]` — UI patterns inspired by [Folio](https://github.com/samwe20/Folio).
 
 > ### WORK IN PROGRESS
 >
-> **Raný prototyp v aktivním vývoji.** Osobní projekt pro vlastní studium knih — **není komerční produkt**, nemá stabilní vydání a API se může měnit bez varování. Testovací instalery z `develop` jsou jen pro autora a ochotné testery.
+> **Early prototype in active development.** A **personal project** for serious reading — **not a commercial product**, no stable release, and behaviour may change without notice. Installers from `develop` are for the author and willing testers only.
 
 [![Windows CI](https://github.com/samwe20/Marginalia/actions/workflows/marginalia.yml/badge.svg?branch=develop)](https://github.com/samwe20/Marginalia/actions/workflows/marginalia.yml)
 [![Stack](https://img.shields.io/badge/stack-Tauri%202%20·%20Vite%20·%20TypeScript-333)](https://tauri.app/)
 
-**[Testovací build z `develop`](#instalace-testovací-verze)** · [Rychlý start](#rychlý-start) · [Složka knihovny](#složka-knihovny)
+**[Test build from `develop`](#test-installer)** · [Quick start](#quick-start) · [Library folder](#library-folder)
 
 </div>
 
 ---
 
-## Co je Marginalia?
+## The problem
 
-**Marginalia** (Marginália) je desktopová aplikace postavená na **[Tauri 2](https://tauri.app/)** pro **Windows**. Slouží ke správě **citátů a poznámek z knih** — nahrazuje workflow s citacemi v **Notability** na iPadu a přidává vrstvu nad surovými poznámkami: citace a poznámky se dají **propojovat** a **dohledávat** napříč knihovnou.
+If you read a lot, you collect **quotes, highlights, and insights** across many books. Sooner or later you ask:
 
-- Otevřete **PDF** nebo **EPUB** (soubor nebo kniha ve složce knihovny).
-- V režimu **Zvýrazňovat** označíte úryvek — aplikace ho uloží jako **citaci** s metadaty (kniha, stránka / CFI, datum).
-- K citacím a v samostatných **poznámkách** píšete v Markdownu včetně `[[Hamlet]]` — funguje **autocomplete** a panel **Odkazuje sem** (backlinky ve stylu Folia).
-- Data leží v **složce, kterou zvolíte** (např. v OneDrive) — offline, bez vlastního cloudu.
+- How do I **find** that passage again?
+- How do I **connect** an idea in one book to another?
+- How do I **navigate** my own notes so they stay oriented, not scattered?
 
-Technicky: čtečka PDF (PDF.js), EPUB (foliate-js), citace a karty knih jako **Markdown + YAML** na disku, fulltext a graf odkazů v lokálním SQLite.
-
----
-
-## Vztah k [Folio](https://github.com/samwe20/Folio)
-
-Marginalia je dnes **samostatná aplikace**. [Folio](https://github.com/samwe20/Folio) je sesterský projekt — klidný Markdown editor s `[[wikilinky]]` a backlinks. Marginalia z něj přebírá **vzory UI a propojování poznámek** (čisté, minimalistické rozhraní).
-
-**Propojení obou aplikací je do budoucna plánované** (společná knihovna nebo synchronizace poznámek). Konkrétní podoba integrace zatím není rozhodnutá — v repozitáři se neuvádí jako hotová funkce.
+Marginalia is a small Windows app that treats a reading library as **linked notes on disk**, not a pile of forgotten marks.
 
 ---
 
-## Funkce podle stavu (`develop`)
+## What Marginalia does
 
-Níže je stav větve **`develop`** k datu úpravy README. Otevřené pull requesty (#15–#18) popisují rozpracovanou práci, která **ještě není sloučená** — po mergi se liší od veřejného `develop`.
+**Marginalia** is built with **[Tauri 2](https://tauri.app/)** for **Windows 10/11**. It answers the questions above by combining a reader with a plain-folder library:
 
-### Hotové nebo použitelné v prototypu
+| Need | In the app |
+|------|------------|
+| Remember where a quote came from | Highlights become **quotes** saved as Markdown with **source metadata** (book, page or EPUB CFI, date) |
+| Connect ideas across books | **Notes** in Markdown with `[[wiki links]]`, autocomplete, and jump-to navigation |
+| See what points here | **Odkazuje sem** panel — **backlinks** to incoming links (same idea as Folio) |
+| Search the pile | **Full-text search** over quotes from your library (local SQLite index) |
+| Own your data | **Offline** library folder you choose (e.g. in OneDrive) — no built-in cloud |
 
-| Oblast | Stav |
-|--------|------|
-| **Platforma** | Windows 10/11, Tauri 2 + WebView2 |
-| **Formáty** | **PDF** a **EPUB** — čtení, navigace v readeru |
-| **Zvýraznění a citace** | Režim **Zvýrazňovat**; po označení textu se citace uloží do knihovny (toast „Citace uložena“) |
-| **Soubory citací** | `citace/<slug-knihy>/<ULID>.md` — YAML + blockquote; karta knihy `knihy/<slug>.md` |
-| **Poznámky** | Samostatné `.md` poznámky, editor CodeMirror, Markdown |
-| **Wikilinky** | `[[název]]`, autocomplete, navigace na existující / vytvoření nové poznámky |
-| **Backlinky** | Panel **Odkazuje sem** u poznámek, knih a citací (inspirace Folio) |
-| **Přehled citací** | Mřížka / filtry (kniha, štítek, text); demo data pro náhled UI |
-| **Hledání** | Fulltext **citací** z knihovny (Tauri SQLite); u poznámek zatím spíš demo / jednoduchý filtr |
-| **Knihovna** | Volba složky v Nastavení; knihy na disku + nedávné v UI; **offline** |
-| **Obálky v UI** | U demo knih typografická písmena; u vlastních knih zatím iniciála z názvu |
-| **CI a testy** | Unit (Vitest), browser E2E (Playwright), Windows installed smoke (WebdriverIO) |
-
-### Omezení a dílčí nedotaženosti
-
-- Projekt je **prototyp** — chování readeru a importu knih se ještě mění.
-- **MOBI** na `develop` **není** (jen PDF/EPUB).
-- **Autor knihy** — pole v kartě knihy existuje, u importovaných souborů často zůstává prázdné, dokud se metadata nedoplní.
-- Uložení citace je dnes vázané na **označení ve zvýrazňovacím režimu**, ne na samostatnou klávesu **H** (viz PR #16).
-- **FTS přes všechny poznámky** v plánu testů označeno jako neimplementované.
-
-### Rozpracováno v otevřených PR (nesloučeno)
-
-| PR | Téma | Poznámka |
-|----|------|----------|
-| [#15](https://github.com/samwe20/Marginalia/pull/15) | Vstupní dialog knihovny, automatický import knih ze složky, vylepšení reader chrome a panelu citací | Čeká na schválení |
-| [#16](https://github.com/samwe20/Marginalia/pull/16) | **MOBI/AZW**, uložení citace klávesou **H**, režimy čtení EPUB/MOBI, obnova zvýraznění, poznámky a wikilinky | Čeká na schválení |
-| [#17](https://github.com/samwe20/Marginalia/pull/17) | Ikona aplikace — **koncept C** (stránka, zvýraznění, backlink) | Čeká na review; **není** v `develop` |
-| [#18](https://github.com/samwe20/Marginalia/pull/18) | **Bibliografie**, offline předvyplnění metadat, citace **neformální / ČSN ISO 690 / APA 7**, obálky z EPUB/MOBI/PDF | Čeká na schválení |
+Under the hood: **PDF.js** and **foliate-js** for reading; quote and book cards as **Markdown + YAML** on disk; quote and link indexes in **local SQLite**.
 
 ---
 
-## Proč vzniká
+## [Folio](https://github.com/samwe20/Folio)
 
-Notability na iPadu dobře slouží k označování PDF a rychlým poznámkám u textu. Chybí ale **síť nad citacemi**: propojení mezi knihami, zpětné odkazy a práce s citacemi jako se soubory v syncované složce. Marginalia to zkouší na Windows s otevřeným formátem (Markdown) a stejnou logikou wikilinků jako ve Folio.
+Marginalia is a **standalone app** today. [Folio](https://github.com/samwe20/Folio) is a calm Markdown editor with `[[wiki links]]` and backlinks — a **design reference** for minimal, functional UI and linking behaviour.
+
+**A future connection between Marginalia and Folio is planned.** The exact shape of that integration is **not decided yet** and is **not** shipped in this repo.
 
 ---
 
-## Rychlý start
+## Features on `develop`
 
-Předpoklady: [Tauri prerequisites](https://tauri.app/start/prerequisites/) na Windows (Rust, WebView2, Visual Studio build tools).
+This reflects branch **`develop`** at the time of this README. Open pull requests **#15–#18** describe work that is **not merged** yet — after merge, `develop` will differ.
+
+### Working in the prototype
+
+| Area | Status |
+|------|--------|
+| **Platform** | Windows 10/11, Tauri 2 + WebView2 |
+| **Formats** | **PDF** and **EPUB** — read and navigate in-app |
+| **Highlights → quotes** | **Highlight** mode; selected text is saved to the library (“Quote saved” toast) |
+| **On-disk quotes** | `citace/<book-slug>/<ULID>.md` — YAML + blockquote; book card `knihy/<slug>.md` |
+| **Notes** | Standalone `.md` notes, CodeMirror editor |
+| **Wiki links** | `[[title]]`, autocomplete, open existing or create a new note |
+| **Backlinks** | **Odkazuje sem** on notes, books, and quotes |
+| **Quote browser** | Grid and filters (book, tag, text); optional demo data for UI preview |
+| **Search** | FTS for **quotes** from your library; notes search is still limited / demo-oriented |
+| **Library** | Pick a folder in Settings; books on disk + recents in UI; **offline** |
+| **Covers in UI** | Typographic initials on demo books; user books show a title initial for now |
+| **CI & tests** | Vitest, Playwright e2e, Windows installed smoke (WebdriverIO) |
+
+### Known limits on `develop`
+
+- **Prototype** — reader and import behaviour still change often.
+- **No MOBI** on `develop` (PDF and EPUB only).
+- **Author** field exists on book cards but is often empty until metadata is filled in.
+- Quotes are saved when you **finish a highlight stroke**, not yet via a dedicated **H** hotkey (see PR #16).
+- **Full-text search across all notes** is marked **not implemented** in the test plan.
+
+### In open PRs (not merged)
+
+| PR | Topic | Note |
+|----|--------|------|
+| [#15](https://github.com/samwe20/Marginalia/pull/15) | Library entry dialog, scan/import books from folder, reader chrome and quote panel fixes | Awaiting approval |
+| [#16](https://github.com/samwe20/Marginalia/pull/16) | **MOBI/AZW**, quote save with **H**, EPUB/MOBI reading modes, highlight restore, notes and wiki links | Awaiting approval |
+| [#17](https://github.com/samwe20/Marginalia/pull/17) | App icon — **concept C** (page, highlight, backlink) | Awaiting review; **not** on `develop` |
+| [#18](https://github.com/samwe20/Marginalia/pull/18) | **Bibliography**, offline metadata prefill, citations (informal / **CSN ISO 690** / **APA 7**), covers from EPUB/MOBI/PDF | Awaiting approval |
+
+---
+
+## Quick start
+
+Prerequisites: [Tauri prerequisites](https://tauri.app/start/prerequisites/) on Windows (Rust, WebView2, Visual Studio build tools).
 
 ```powershell
 git clone https://github.com/samwe20/Marginalia.git
@@ -96,59 +105,59 @@ npm ci
 npm run desktop:dev
 ```
 
-Sestavení instalátoru:
+Installer build:
 
 ```powershell
 npm run desktop:build:windows
 ```
 
-Výstup: `src-tauri/target/release/bundle/nsis/`.
+Output: `src-tauri/target/release/bundle/nsis/`.
 
 ---
 
-## Instalace testovací verze
+## Test installer
 
-Po pushi na `develop` CI zveřejní instalační soubor jako **předběžné vydání** (`develop-latest` — test build, ne stabilní „latest“):
+Pushes to `develop` publish a **pre-release** asset (`develop-latest` — test build, not a stable “latest”):
 
-`https://github.com/samwe20/Marginalia/releases/download/develop-latest/Marginalia-<verze>-test-<krátký-sha>-setup.exe`
+`https://github.com/samwe20/Marginalia/releases/download/develop-latest/Marginalia-<version>-test-<short-sha>-setup.exe`
 
-Název se mění s každým buildem (verze z `package.json` / `tauri.conf.json`, SHA z commitu). Aktuální asset je u release [develop-latest](https://github.com/samwe20/Marginalia/releases/tag/develop-latest).
+The filename changes every build (version from `package.json` / `tauri.conf.json`, SHA from the commit). See [develop-latest](https://github.com/samwe20/Marginalia/releases/tag/develop-latest) for the current `Marginalia-*-test-*-setup.exe` asset.
 
-U nepodepsané sestavy může Windows SmartScreen zobrazit varování — **Další informace** → **Přesto spustit**.
-
----
-
-## Složka knihovny
-
-Ve složce, kterou zvolíte (např. v OneDrive):
-
-| Cesta | Obsah |
-|-------|--------|
-| `knihy/<book-slug>.md` | Karta knihy (název, autor, cesta k souboru, hash) |
-| `citace/<book-slug>/<ULID>.md` | Jedna citace — YAML front matter + citovaný text |
-| `poznamky/*.md` | Volné poznámky s wikilinky |
-
-Indexy fulltextu a odkazů: SQLite v lokálních datech aplikace (lze znovu sestavit).
+Unsigned builds may trigger Windows SmartScreen — **More info** → **Run anyway**.
 
 ---
 
-## Testy
+## Library folder
+
+In the folder you choose (e.g. synced with OneDrive):
+
+| Path | Contents |
+|------|----------|
+| `knihy/<book-slug>.md` | Book card (title, author, file path, hash) |
+| `citace/<book-slug>/<ULID>.md` | One quote — YAML front matter + quoted text |
+| `poznamky/*.md` | Free-standing notes with wiki links |
+
+Quote and link indexes live in app-local SQLite (rebuildable).
+
+---
+
+## Tests
 
 ```bash
 npm test
 npm run test:e2e
 ```
 
-Na Windows: `npm run test:desktop-smoke` (vyžaduje sestavený installer dle CI). Podrobněji: [docs/testing/](docs/testing/).
+On Windows: `npm run test:desktop-smoke` (requires a built installer as in CI). Details: [docs/testing/](docs/testing/).
 
 ---
 
 ## Git workflow
 
-`feature/*` nebo `cursor/*` → **`develop`** (test buildy, smoke) → později PR do **`main`**. Sloučení významných změn schvaluje Jan.
+`feature/*` or `cursor/*` → **`develop`** (test builds, smoke) → later PR to **`main`**. Significant merges are approved by Jan.
 
 ---
 
-## Licence
+## License
 
-Zatím bez explicitní licence v repozitáři — osobní prototyp; použití mimo autora zatím neočekáváme.
+No license file in the repo yet — personal prototype; wider use is not expected for now.
