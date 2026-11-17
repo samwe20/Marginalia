@@ -32,7 +32,7 @@
           "$TEMP/**"
         ]
       },
-      "csp": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-src 'none'; form-action 'none'; connect-src 'self' ipc: http://ipc.localhost blob:; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'"
+      "csp": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-src 'self' blob: data:; form-action 'none'; connect-src 'self' ipc: http://ipc.localhost blob:; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'"
     }
   },
   "bundle": {

@@ -66,6 +66,21 @@ export function rectInTopViewport(doc: Document, local: DOMRect): DOMRect {
   return new DOMRect(left, top, local.width, local.height);
 }
 
+export function findFallbackPointerRect(
+  container: HTMLElement,
+): { x: number; y: number; x2: number; y2: number } | null {
+  const el = container.querySelector(".epub-fallback-text");
+  if (!(el instanceof HTMLElement)) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width < 8 || r.height < 4) return null;
+  return {
+    x: Math.floor(r.left + 6),
+    y: Math.floor(r.top + r.height / 2),
+    x2: Math.floor(r.right - 6),
+    y2: Math.floor(r.top + r.height / 2),
+  };
+}
+
 export function findIframePointerRect(
   docs: Document[],
   pickText?: (plain: string) => boolean,

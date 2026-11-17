@@ -905,9 +905,17 @@ body.setup-modal-open .workspace {
 .epub-root {
   max-width: 42rem;
   margin: 0 auto;
+  min-height: min(68vh, 100%);
   font-family: var(--font-body);
   font-size: 18px;
   line-height: 1.7;
+}
+
+.epub-root foliate-view {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  height: 100%;
 }
 
 .pdf-page {

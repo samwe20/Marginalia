@@ -2,6 +2,7 @@ import "foliate-js/view.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
 import {
   collectFoliateContentDocuments,
+  findFallbackPointerRect,
   findIframePointerRect,
   iframeVisibleTextLength,
 } from "../lib/epub-iframe-geometry";
@@ -93,8 +94,8 @@ export class EpubReader {
         roots.push(el);
       }
     };
-    for (const { doc } of this.view?.renderer?.getContents?.() ?? []) {
-      add(doc?.body ?? null);
+    for (const doc of this.contentDocuments()) {
+      add(doc.body ?? null);
     }
     const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? this.view;
     if (highlightRoot instanceof HTMLElement) add(highlightRoot);
@@ -122,6 +123,35 @@ export class EpubReader {
   /** Viewport drag endpoints for text inside foliate EPUB iframes only. */
   foliateIframePointerRect(): { x: number; y: number; x2: number; y2: number } | null {
     return findIframePointerRect(this.contentDocuments());
+  }
+
+  /** Pointer drag endpoints for the surface the user actually reads (iframe, else plain fallback). */
+  readerPointerSelectionRect(): { x: number; y: number; x2: number; y2: number } | null {
+    return (
+      this.foliateIframePointerRect() ?? findFallbackPointerRect(this.opts.container)
+    );
+  }
+
+  readerRenderMode(): "iframe" | "fallback" | "empty" {
+    if (this.foliateIframeVisibleTextLength() > 3) return "iframe";
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    if ((fallback?.textContent?.trim().length ?? 0) > 3) return "fallback";
+    return "empty";
+  }
+
+  readerRenderInfo(): {
+    mode: "iframe" | "fallback" | "empty";
+    iframeTextLength: number;
+    fallbackTextLength: number;
+    visibleTextLength: number;
+  } {
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    return {
+      mode: this.readerRenderMode(),
+      iframeTextLength: this.foliateIframeVisibleTextLength(),
+      fallbackTextLength: fallback?.textContent?.trim().length ?? 0,
+      visibleTextLength: this.visibleDomTextLength(),
+    };
   }
 
   async load(file: Blob | File): Promise<void> {
@@ -230,6 +260,7 @@ export class EpubReader {
       this.contentRoot = container.querySelector(".epub-fallback-text");
       this.refreshDocText();
       this.syncTextReadyFlag();
+      this.wireHighlighter();
       return;
     }
     const article = document.createElement("article");
@@ -239,6 +270,7 @@ export class EpubReader {
     this.contentRoot = article;
     this.refreshDocText();
     this.syncTextReadyFlag();
+    this.wireHighlighter();
   }
 
   /** Visible text in foliate DOM (not ZIP/Rust fallback). */
@@ -356,6 +388,7 @@ export class EpubReader {
   private syncTextReadyFlag(): void {
     const { container } = this.opts;
     container.dataset.epubTextReady = this.visibleDomTextLength() > 3 ? "1" : "0";
+    container.dataset.epubRenderMode = this.readerRenderMode();
   }
 
   private refreshDocText(): void {

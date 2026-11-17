@@ -36,11 +36,11 @@ Výstupy: `test-results/desktop-smoke/` (screenshoty, `smoke-results.json`).
 | S04 | Auto-list PDF (podsložka) + EPUB + MOBI | ≥3 karty včetně `data-kind="mobi"` |
 | S05 | PDF výběr **neukládá** citaci | pointer drag v `.textLayer`, `smoke_list_quote_files` beze změny |
 | S06 | reopen | karta knihovny |
-| S07 | EPUB (viditelný text) | karta `data-kind="epub"` + `epubVisibleTextLength` |
+| S07 | EPUB (viditelný text) | karta `data-kind="epub"` + `epubReaderRenderInfo` (`iframe` vs `fallback`) |
 | S08–S13 | dřívější checklist | beze změny |
 | S14 | **PDF citace po H** | pointer výběr + `browser.keys('H')`, `.md`, highlight, panel, Citace |
 | S15 | **EPUB citace po H** | stejný UI flow; klik jinam bez H nesmí přidat citaci |
-| S19 | **MOBI viditelný text** | karta `data-kind="mobi"` |
+| S19 | **MOBI text + citace po H** | karta `data-kind="mobi"` + `renderInfo` + pointer + **H** |
 | S20 | citace knihy A ≠ panel knihy B | `smoke_read_library_text` + panel |
 | S21 | **Autor** | `#reader-author` → `knihy/<slug>.md` + chipy panel + záložka Citace |
 | S22 | poznámka k citaci | `textarea[data-quote-comment]` + `reloadSession` |

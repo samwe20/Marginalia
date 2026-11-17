@@ -105,7 +105,7 @@ async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: numb
       "epubPointerSelectionRect",
     );
   }
-  if (!rect) throw new Error("EPUB iframe text not found for pointer selection");
+  if (!rect) throw new Error("EPUB/MOBI reader text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
   return rect;
 }
@@ -351,8 +351,20 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     try {
       await goLibrary();
       await openEpubFromLibraryCard();
+      await callSmokeApi<number>("ensureEpubReaderReady");
+      const renderInfo = await callSmokeApi<{
+        mode: string;
+        iframeTextLength: number;
+        fallbackTextLength: number;
+        visibleTextLength: number;
+      }>("epubReaderRenderInfo");
       await expect($("#epub-root foliate-view, #epub-root .epub-fallback-text")).toBeDisplayed();
-      record("S07", "Open EPUB from library card", true);
+      record(
+        "S07",
+        "Open EPUB from library card",
+        true,
+        JSON.stringify({ renderInfo }),
+      );
     } catch (e) {
       record("S07", "Open EPUB from library card", false, String(e));
       throw e;
@@ -393,7 +405,9 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       }
       await openQuotesTab();
       await expect($(`[data-user-quote="${quoteId}"]`)).toBeDisplayed();
+      const renderInfo = await callSmokeApi<Record<string, unknown>>("epubReaderRenderInfo");
       const s15Detail = JSON.stringify({
+        renderInfo,
         pointer,
         quoteMdBefore: before,
         quoteMdAfterSelection: afterSelect,
@@ -599,19 +613,43 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S19 MOBI otevření — viditelný text", async () => {
+  it("S19 MOBI otevření — viditelný text + citace po H", async () => {
     try {
       if (!mobiPath) throw new Error("MARGINALIA_FIXTURE_MOBI not set");
       await goLibrary();
       const card = await $('.book-card[data-kind="mobi"]:not(.book-card--demo)');
       await card.click();
       await waitEpubTextReady(120_000);
+      await callSmokeApi<number>("ensureEpubReaderReady");
+      const renderInfo = await callSmokeApi<Record<string, unknown>>("epubReaderRenderInfo");
       const len = (await callSmokeApi<number>("epubVisibleTextLength")) ?? 0;
       if (len <= 3) throw new Error(`MOBI visible text too short: ${len}`);
       await saveScreenshot("smoke-mobi-visible.png");
-      record("S19", "MOBI reader visible text", true, `chars=${len}`);
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("mobi"));
+      const before = (await quoteFilesOnDisk(slug)).length;
+      const pointer = await pointerSelectEpubText();
+      await browser.pause(500);
+      const afterSelect = (await quoteFilesOnDisk(slug)).length;
+      if (afterSelect !== before) throw new Error(`MOBI selection alone created quote (${before} → ${afterSelect})`);
+      await pressHighlightSaveKey();
+      await browser.waitUntil(
+        async () => (await quoteFilesOnDisk(slug)).length > before,
+        { timeout: 20_000, timeoutMsg: "MOBI quote .md after H" },
+      );
+      const afterH = (await quoteFilesOnDisk(slug)).length;
+      if (afterH !== before + 1) {
+        throw new Error(`expected exactly one new MOBI quote .md after H (${before} → ${afterH})`);
+      }
+      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      record(
+        "S19",
+        "MOBI reader visible text + citace po H",
+        true,
+        JSON.stringify({ renderInfo, pointer, quoteMdBefore: before, quoteMdAfterH: afterH }),
+      );
     } catch (e) {
-      record("S19", "MOBI reader visible text", false, String(e));
+      record("S19", "MOBI reader visible text + citace po H", false, String(e));
       throw e;
     }
   }).timeout(420_000);

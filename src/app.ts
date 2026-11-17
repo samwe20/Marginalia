@@ -1164,19 +1164,28 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
     ensureEpubReaderReady: async () => {
       if (!epub) throw new Error("EPUB reader not active");
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + 45_000;
       while (Date.now() < deadline) {
-        if (epub.foliateIframePointerRect()) return epub.visibleDomTextLength();
         if (epub.foliateIframeVisibleTextLength() > 3) {
-          await new Promise((r) => window.setTimeout(r, 400));
-          continue;
+          return epub.visibleDomTextLength();
         }
-        await new Promise((r) => window.setTimeout(r, 400));
+        await new Promise((r) => window.setTimeout(r, 350));
       }
       await epub.ensureReadableFallback();
       return epub.visibleDomTextLength();
     },
-    epubPointerSelectionRect: () => epub?.foliateIframePointerRect() ?? null,
+    epubReaderRenderInfo: () => {
+      if (!epub) {
+        return {
+          mode: "empty" as const,
+          iframeTextLength: 0,
+          fallbackTextLength: 0,
+          visibleTextLength: 0,
+        };
+      }
+      return epub.readerRenderInfo();
+    },
+    epubPointerSelectionRect: () => epub?.readerPointerSelectionRect() ?? null,
     getLibraryRoot: () => state.libraryRoot,
     getFolderPickerInvocationCount,
     resetFirstRunClientState: async () => {
