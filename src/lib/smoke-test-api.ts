@@ -48,6 +48,11 @@ export type SmokeTestApi = {
   rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
   countScannedBookCards: () => Promise<number>;
   isSetupModalVisible: () => boolean;
+  openBibliographyPanel: () => void;
+  setBibliographyField: (field: string, value: string) => void;
+  getBibliographyField: (field: string) => string;
+  getLastCitationCopy: () => string;
+  triggerCopyCitation: (style: "informal" | "iso690" | "apa7") => Promise<string>;
 };
 
 declare global {

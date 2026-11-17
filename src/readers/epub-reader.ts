@@ -45,6 +45,7 @@ type FoliateView = HTMLElement & {
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
+  private packageMetadata: unknown = null;
   private highlights: HighlightHandle[] = [];
   private readyTimer: number | null = null;
   private docText = "";
@@ -249,6 +250,7 @@ export class EpubReader {
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
+    this.packageMetadata = (book as { metadata?: unknown }).metadata ?? null;
     await this.captureFixturePlainText(
       book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
     );
@@ -688,6 +690,10 @@ export class EpubReader {
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
     return range;
+  }
+
+  getPackageMetadata(): unknown {
+    return this.packageMetadata;
   }
 
   destroy(): void {

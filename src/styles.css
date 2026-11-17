@@ -1075,28 +1075,109 @@ body.setup-modal-open .workspace {
   min-width: 0;
 }
 
-.reader-author-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
+.reader-bib {
   font-size: 0.78rem;
   color: var(--muted);
-  max-width: min(42vw, 22rem);
+  max-width: min(52vw, 28rem);
 }
 
-.reader-author-label {
-  flex-shrink: 0;
+.reader-bib-summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 65%, transparent);
+  text-underline-offset: 0.2em;
 }
 
-.reader-author-input {
-  min-width: 10rem;
-  max-width: 18rem;
-  padding: 0.35rem 0.55rem;
+.reader-bib-summary::-webkit-details-marker {
+  display: none;
+}
+
+.reader-bib-panel {
+  margin-top: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  max-height: min(52vh, 20rem);
+  overflow: auto;
+}
+
+.reader-bib-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.reader-bib-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.76rem;
+}
+
+.reader-bib-authors {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.reader-bib-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.reader-bib-author-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+}
+
+.reader-bib-input {
+  width: 100%;
+  padding: 0.32rem 0.5rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--ink);
   font: inherit;
+  font-size: 0.8rem;
+}
+
+.reader-bib-add-author {
+  align-self: start;
+  font-size: 0.74rem;
+  padding: 0.2rem 0.45rem;
+}
+
+.quote-card__cite {
+  margin-top: 0.45rem;
+  font-size: 0.76rem;
+}
+
+.quote-card__cite-summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  list-style: none;
+}
+
+.quote-card__cite-summary::-webkit-details-marker {
+  display: none;
+}
+
+.quote-card__cite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.quote-card__cite-btn {
+  font-size: 0.74rem;
+  padding: 0.18rem 0.45rem;
 }
 
 .quote-card__note-field {
