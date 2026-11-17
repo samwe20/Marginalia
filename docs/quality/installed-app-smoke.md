@@ -12,7 +12,7 @@
 
 - Job **`windows-develop-release`** publikuje `develop-latest` **jen na push do `develop`**, pokud smoke projde.
 
-- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S01–S17, S18–S23).
+- **Striktní gate:** `scripts/ci/windows-installed-smoke.ps1` selže, pokud libovolný řádek v `smoke-results.json` má `ok: false` (S00–S31).
 
 ## Příkazy lokálně (Windows)
 
@@ -46,8 +46,15 @@ Výstupy: `test-results/desktop-smoke/` (screenshoty, `smoke-results.json`).
 | S22 | poznámka k citaci | `textarea[data-quote-comment]` + `reloadSession` |
 | S23 | PDF stránka + counter | 2stránkový fixture, `reader-page-counter` `2/2`, label `str. 2` |
 | S16–S17 | wikilink, dialog | smoke API (ne citace) |
+| S00 | Clean install: AppData pryč, knihovna zachována | NSIS `/S /DELETEAPPDATA` |
+| S24 | EPUB viewport text | bounding rect / `epubViewportVisibleTextLength` |
+| S25 | Vícesekční MOBI (Hamlet) | start + pozice po reopen |
+| S26 | Posouvání × Stránkování + perzistence | settings + restart |
+| S27–S29 | Poznámky rename / highlight restore / single editor | Folio editor + overlay |
+| S30 | Bibliografie + copy citation | panel + `knihy/<slug>.md` |
+| S31 | Cover cache po restartu | `.book-card__cover-image` / typographic |
 
-**Citace se v smoke netestují přes `createPdfQuoteFromSelection` / `createEpubQuoteFromSelection`.** Rust invoke slouží jen k ověření souborů na disku (`smoke_list_quote_files`, `smoke_read_library_text`).
+**S15/S19 citace musí vzniknout reálným mouse drag + H** (ne `createEpubQuoteFromSelection` / `prepareEpubTextSelection` fallback). Rust invoke slouží k ověření souborů na disku (`smoke_list_quote_files`, `smoke_read_library_text`).
 
 ## Nepoužívat web build jako důkaz desktopu
 

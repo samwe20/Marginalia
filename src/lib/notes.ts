@@ -189,7 +189,12 @@ export async function renameNote(libraryRoot: string, note: LibraryNote, newTitl
   if (isTauri() && libraryRoot && filename !== note.filename) {
     const { rename } = await import("@tauri-apps/plugin-fs");
     await rename(notePath(libraryRoot, note.filename), notePath(libraryRoot, filename));
-    await indexRemoveNote(note.id);
+    // Best-effort: saveNote upserts the new path; a stale FTS row must not abort the rename.
+    try {
+      await indexRemoveNote(note.id);
+    } catch (e) {
+      console.warn("indexRemoveNote after rename failed", e);
+    }
   }
   await saveNote(libraryRoot, renamed);
   return renamed;
