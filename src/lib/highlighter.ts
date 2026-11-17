@@ -123,8 +123,26 @@ export function attachHighlighter(
       }) as PointerEvent;
 
   const onMouseDown = (ev: MouseEvent) => onPointerDown(asPointer(ev));
-  const onMouseMove = (ev: MouseEvent) => onPointerMove(asPointer(ev));
-  const onMouseUp = (ev: MouseEvent) => onPointerUp(asPointer(ev));
+
+  const onMouseMove = (ev: MouseEvent) => {
+    if (activePointer === null) return;
+    onPointerMove(asPointer(ev));
+  };
+
+  /** Native browser selection (WebDriver mouse drag) when custom stroke did not start. */
+  const onMouseUp = (ev: MouseEvent) => {
+    if (activePointer !== null) {
+      onPointerUp(asPointer(ev));
+      return;
+    }
+    if (mode() !== "highlight" || ev.button !== 0) return;
+    const sel = getSelection();
+    const range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    if (range && !range.collapsed) {
+      pendingRange = range;
+      onSelectionPending?.();
+    }
+  };
 
   root.addEventListener("pointerdown", onPointerDown);
   root.addEventListener("pointermove", onPointerMove);

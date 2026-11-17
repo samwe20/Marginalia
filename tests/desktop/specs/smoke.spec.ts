@@ -123,61 +123,101 @@ async function pointerSelectPdfText(): Promise<void> {
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
-async function resolveFoliateShadowIframe(): Promise<WebdriverIO.Element | null> {
+async function enterFoliateContentFrame(): Promise<{ iframeCount: number; picked: number } | null> {
   const host = await $("#epub-root foliate-view");
   if (!(await host.isExisting())) return null;
+  let iframes: WebdriverIO.Element[] = [];
   try {
     const paginator = await host.shadow$("foliate-paginator");
     if (await paginator.isExisting()) {
-      const ifr = await paginator.shadow$("iframe");
-      if (await ifr.isExisting()) return ifr;
+      iframes = await paginator.shadow$$("iframe");
     }
   } catch {
     /* foliate closed shadow */
   }
-  try {
-    const ifr = await host.shadow$("iframe");
-    if (await ifr.isExisting()) return ifr;
-  } catch {
-    /* */
+  if (!iframes.length) {
+    try {
+      const one = await host.shadow$("iframe");
+      if (await one.isExisting()) iframes = [one];
+    } catch {
+      /* */
+    }
   }
-  return null;
+  if (!iframes.length) return null;
+  let bestIdx = 0;
+  let bestLen = -1;
+  for (let i = 0; i < iframes.length; i++) {
+    await browser.switchToFrame(iframes[i]);
+    const len = (await browser.execute(function () {
+      return document.body?.textContent?.replace(/\s+/g, " ").trim().length ?? 0;
+    })) as number;
+    await browser.switchToParentFrame();
+    if (len > bestLen) {
+      bestLen = len;
+      bestIdx = i;
+    }
+  }
+  await browser.switchToFrame(iframes[bestIdx]);
+  return { iframeCount: iframes.length, picked: bestIdx };
 }
 
-async function dumpEpubPointerFailure(stage: string): Promise<never> {
+function safeDiagStage(stage: string): string {
+  return stage
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 64);
+}
+
+async function dumpEpubPointerFailure(stage: string, extra?: Record<string, unknown>): Promise<never> {
   try {
     await browser.switchToFrame(null);
   } catch {
     /* */
   }
-  await saveScreenshot(`smoke-epub-fail-${stage.replace(/[^a-z0-9_-]+/gi, "-")}.png`);
+  const tag = safeDiagStage(stage);
+  try {
+    await saveScreenshot(`smoke-epub-fail-${tag}.png`);
+  } catch {
+    /* WebView screenshot path can fail on Windows */
+  }
   const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
   fs.mkdirSync(artifactDir, { recursive: true });
   fs.writeFileSync(
-    path.join(artifactDir, `smoke-epub-diag-${stage.replace(/[^a-z0-9_-]+/gi, "-")}.json`),
-    JSON.stringify({ stage, diag }, null, 2),
+    path.join(artifactDir, `smoke-epub-diag-${tag}.json`),
+    JSON.stringify({ stage, extra, diag }, null, 2),
   );
-  throw new Error(`EPUB/MOBI pointer/H (${stage}): ${JSON.stringify(diag)}`);
+  throw new Error(`EPUB/MOBI pointer/H (${stage}): ${JSON.stringify({ extra, diag })}`);
 }
 
 async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
-  const textEl = (await $("p, span, body")) as WebdriverIO.Element;
-  await textEl.waitForExist({ timeout: 8_000 });
-  await textEl.click();
   const drag = (await browser.execute(function () {
-    const p = document.querySelector("p, span") ?? document.body;
-    const r = p.getBoundingClientRect();
-    if (r.width < 8 || r.height < 4) return null;
+    const body = document.body;
+    if (!body) return null;
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let textNode: Text | null = null;
+    while (walker.nextNode()) {
+      const t = walker.currentNode as Text;
+      if (t.data.replace(/\s+/g, " ").trim().length >= 5) {
+        textNode = t;
+        break;
+      }
+    }
+    if (!textNode) return null;
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    const r = range.getClientRects()[0] ?? textNode.parentElement?.getBoundingClientRect();
+    if (!r || r.width < 4 || r.height < 2) return null;
     const y = Math.floor(r.top + r.height / 2);
     return {
-      x1: Math.floor(r.left + 4),
+      x1: Math.floor(r.left + 2),
       y1: y,
-      x2: Math.floor(r.right - 4),
+      x2: Math.floor(r.right - 2),
       y2: y,
-      preview: (p.textContent ?? "").trim().slice(0, 80),
+      preview: textNode.data.trim().slice(0, 80),
     };
   })) as { x1: number; y1: number; x2: number; y2: number; preview: string } | null;
-  if (!drag) throw new Error("no p/span/body in foliate content frame");
+  if (!drag) throw new Error("no text node in foliate content frame");
   // Viewport coords inside the content iframe (not element-relative — avoids bad y2).
   await pointerDragViewport(drag.x1, drag.y1, drag.x2, drag.y2, 420);
   const inFrameSelection = (await browser.execute(function () {
@@ -199,15 +239,16 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
-  const ifr = await resolveFoliateShadowIframe();
-  if (!ifr) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
-  await browser.switchToFrame(ifr);
+  const frameMeta = await enterFoliateContentFrame();
+  if (!frameMeta) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
   let frameDrag: Record<string, unknown>;
   try {
     frameDrag = await dragSelectInCurrentFrame();
+    frameDrag.iframeMeta = frameMeta;
   } catch (e) {
     await browser.switchToFrame(null);
-    return dumpEpubPointerFailure(`shadow-drag-error-${String(e)}`);
+    const err = e instanceof Error ? e.message : String(e);
+    return dumpEpubPointerFailure("shadow-drag-error", { err, frameMeta });
   }
   const inFrame = frameDrag.inFrameSelection as { length: number; preview: string };
   await browser.switchToFrame(null);
@@ -221,6 +262,7 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   );
   return {
     space: "foliate-shadow-iframe",
+    frameMeta,
     frameDrag,
     viewport,
     selectionAfterDrag: { inFrame, app: diag.selection },
