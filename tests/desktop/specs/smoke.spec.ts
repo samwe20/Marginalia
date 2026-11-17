@@ -8,6 +8,7 @@ const epubPath = process.env.MARGINALIA_FIXTURE_EPUB!;
 const mobiPath = process.env.MARGINALIA_FIXTURE_MOBI ?? "";
 const mobiMultiSource = process.env.MARGINALIA_FIXTURE_MOBI_MULTI ?? "";
 const pdfExtraSource = process.env.MARGINALIA_FIXTURE_PDF_EXTRA!;
+const cleanInstallProof = process.env.MARGINALIA_CLEAN_INSTALL_PROOF ?? "";
 const artifactDir =
   process.env.SMOKE_ARTIFACTS_DIR ?? path.join(process.cwd(), "test-results", "desktop-smoke");
 
@@ -525,6 +526,23 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     const table = results.map((r) => `${r.ok ? "PASS" : "FAIL"}\t${r.id}\t${r.name}\t${r.detail ?? ""}`).join("\n");
     fs.writeFileSync(path.join(artifactDir, "smoke-results.json"), JSON.stringify(results, null, 2));
     fs.writeFileSync(path.join(artifactDir, "smoke-results.txt"), table);
+  });
+
+  it("S00 clean install smaže jen AppData a zachová knihovnu", () => {
+    try {
+      if (!cleanInstallProof || !fs.existsSync(cleanInstallProof)) {
+        throw new Error(`clean-install proof missing: ${cleanInstallProof || "(unset)"}`);
+      }
+      const proof = JSON.parse(fs.readFileSync(cleanInstallProof, "utf8")) as Record<string, boolean>;
+      const failed = Object.entries(proof)
+        .filter(([, ok]) => ok !== true)
+        .map(([name]) => name);
+      if (failed.length) throw new Error(`failed checks: ${failed.join(", ")}`);
+      record("S00", "Clean install: AppData pryč, knihovna zachována", true, JSON.stringify(proof));
+    } catch (e) {
+      record("S00", "Clean install: AppData pryč, knihovna zachována", false, String(e));
+      throw e;
+    }
   });
 
   it("S01 library shell", async () => {
