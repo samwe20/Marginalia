@@ -8,26 +8,6 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_fs::FsExt;
 
-#[cfg(windows)]
-fn remember_library_root_for_installer(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
-    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
-
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key_path = format!(r"Software\{}", app.config().identifier);
-    let (key, _) = hkcu.create_subkey(key_path).map_err(|e| e.to_string())?;
-    let value = path.to_string_lossy().into_owned();
-    key.set_value("LibraryRoot", &value)
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(not(windows))]
-fn remember_library_root_for_installer(
-    _app: &tauri::AppHandle,
-    _path: &Path,
-) -> Result<(), String> {
-    Ok(())
-}
-
 #[tauri::command]
 fn allow_library_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let path = Path::new(&path);
@@ -40,7 +20,6 @@ fn allow_library_path(app: tauri::AppHandle, path: String) -> Result<(), String>
     app.asset_protocol_scope()
         .allow_directory(path, true)
         .map_err(|e| e.to_string())?;
-    remember_library_root_for_installer(&app, path)?;
     Ok(())
 }
 
