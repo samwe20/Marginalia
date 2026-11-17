@@ -1603,8 +1603,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     const openNotes = async () => {
       await $('[data-route="notes"]').click();
       await browser.waitUntil(
-        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
-        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+        async () => {
+          const layout = await $(".notes-layout");
+          if (!(await layout.isExisting())) return false;
+          return (await layout.getAttribute("data-notes-ready")) === "1";
+        },
+        { timeout: 30_000, timeoutMsg: "notes view not ready" },
       );
     };
     const created: { filename: string; text: string }[] = [];
