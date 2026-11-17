@@ -53,7 +53,7 @@ export async function renderNotesView(
 
   const paint = () => {
     stageMain.innerHTML = `
-      <div class="notes-layout" data-notes-ready="1">
+      <div class="notes-layout" data-notes-ready="1" data-active-note-id="${escapeHtml(current?.id ?? "")}" data-active-note-filename="${escapeHtml(current?.filename ?? "")}">
         <aside class="notes-list">
           <div class="notes-list__header">
             <h2 class="section-title">Poznámky</h2>

@@ -424,18 +424,15 @@ async function saveScreenshot(name: string) {
  * driverProvider: "external").
  */
 async function disarmMissingWdioPluginBridge() {
-  await browser.execute(function installWdioTauriStub() {
+  // String script only: ts-node can inject a browser-unsafe `__name()` helper into function bodies.
+  await browser.execute(`
     if (window.wdioTauri && typeof window.wdioTauri.execute === "function") return false;
     window.wdioTauri = {
-      execute: function () {
-        return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed"));
-      },
-      waitForInit: function () {
-        return Promise.resolve();
-      },
+      execute: function () { return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed")); },
+      waitForInit: function () { return Promise.resolve(); }
     };
     return true;
-  });
+  `);
   try {
     const handles = await browser.getWindowHandles();
     if (handles.length) await browser.switchToWindow(handles[0]);
@@ -1446,16 +1443,26 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const names = created.map((c) => c.filename);
       if (new Set(names).size !== 3) throw new Error(`notes share a file: ${names.join(", ")}`);
 
-      const renamedTitle = `Smoke přejmenovaná ${stamp}`;
-      await $(`[data-note-filename="${created[1].filename}"]`).click();
+      const renamedTitle = `Smoke prejmenovana ${stamp}`;
+      const targetFilename = created[1].filename;
+      const targetTitle = targetFilename.replace(/\.md$/, "");
+      await $(`.note-list-item[data-note-filename="${targetFilename}"]`).click();
+      // The click handler awaits a full notes remount — wait for that paint, not the pre-click DOM.
       await browser.waitUntil(
-        async () => ((await $("#note-title").getValue()) ?? "") === created[1].filename.replace(/\.md$/, ""),
-        { timeout: 10_000, timeoutMsg: "note title field did not show the selected note" },
+        async () =>
+          (await $(".notes-layout").getAttribute("data-active-note-filename")) === targetFilename &&
+          ((await $("#note-title").getValue()) ?? "") === targetTitle,
+        { timeout: 15_000, timeoutMsg: "note title field did not show the selected note after remount" },
       );
-      const title = await $("#note-title");
-      await title.click();
-      await title.setValue(renamedTitle);
-      await browser.keys(["Enter"]);
+      await browser.pause(400);
+      await browser.execute((nextTitle) => {
+        const input = document.getElementById("note-title") as HTMLInputElement | null;
+        if (!input) throw new Error("#note-title missing");
+        input.focus();
+        input.value = nextTitle;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.blur();
+      }, renamedTitle);
       await browser.waitUntil(async () => (await listFilenames()).includes(`${renamedTitle}.md`), {
         timeout: 20_000,
         timeoutMsg: "renamed note not in the list",

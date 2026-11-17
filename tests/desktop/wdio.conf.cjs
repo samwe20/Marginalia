@@ -17,18 +17,15 @@ const suiteTimeoutMs = Number(process.env.MARGINALIA_SMOKE_SUITE_TIMEOUT_MS || 3
  */
 async function disarmMissingWdioPluginBridge(browser) {
   if (!browser || typeof browser.execute !== "function") return;
-  await browser.execute(function installWdioTauriStub() {
+  // String script: avoids any transpiler helper leaking into the WebView (e.g. `__name`).
+  await browser.execute(`
     if (window.wdioTauri && typeof window.wdioTauri.execute === "function") return false;
     window.wdioTauri = {
-      execute: function () {
-        return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed"));
-      },
-      waitForInit: function () {
-        return Promise.resolve();
-      },
+      execute: function () { return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed")); },
+      waitForInit: function () { return Promise.resolve(); }
     };
     return true;
-  });
+  `);
   try {
     const handles = await browser.getWindowHandles();
     if (handles.length) await browser.switchToWindow(handles[0]);
