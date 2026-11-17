@@ -122,11 +122,24 @@ export function attachHighlighter(
     }
   };
 
+  const syncPendingFromSelection = () => {
+    if (mode() !== "highlight") return;
+    const sel = getSelection();
+    const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range || range.collapsed || !range.toString().trim()) return;
+    const node = range.commonAncestorContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    if (!el || !root.contains(el)) return;
+    pendingRange = range.cloneRange();
+    onSelectionPending?.();
+  };
+
   root.addEventListener("pointerdown", onPointerDown);
   root.addEventListener("pointermove", onPointerMove);
   root.addEventListener("pointerup", onPointerUp);
   root.addEventListener("pointercancel", onPointerUp);
   root.addEventListener("mouseup", onMouseUp);
+  ownerDoc().addEventListener("selectionchange", syncPendingFromSelection);
 
   const detach = () => {
     root.removeEventListener("pointerdown", onPointerDown);
@@ -134,6 +147,7 @@ export function attachHighlighter(
     root.removeEventListener("pointerup", onPointerUp);
     root.removeEventListener("pointercancel", onPointerUp);
     root.removeEventListener("mouseup", onMouseUp);
+    ownerDoc().removeEventListener("selectionchange", syncPendingFromSelection);
     clearPending();
   };
 

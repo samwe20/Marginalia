@@ -101,6 +101,7 @@ async function pointerDragOnElement(
   fromY: number,
   toX: number,
   toY: number,
+  moveMs = 280,
 ) {
   await browser.performActions([
     {
@@ -110,11 +111,38 @@ async function pointerDragOnElement(
       actions: [
         { type: "pointerMove", duration: 0, origin: element as unknown as object, x: fromX, y: fromY },
         { type: "pointerDown", button: 0 },
-        { type: "pointerMove", duration: 280, origin: element as unknown as object, x: toX, y: toY },
+        { type: "pointerMove", duration: moveMs, origin: element as unknown as object, x: toX, y: toY },
         { type: "pointerUp", button: 0 },
       ],
     },
   ]);
+  await browser.releaseActions();
+}
+
+async function pointerDragOnElementSteps(
+  element: WebdriverIO.Element,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  steps = 12,
+) {
+  const actions: object[] = [
+    { type: "pointerMove", duration: 0, origin: element as unknown as object, x: fromX, y: fromY },
+    { type: "pointerDown", button: 0 },
+  ];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    actions.push({
+      type: "pointerMove",
+      duration: 35,
+      origin: element as unknown as object,
+      x: Math.floor(fromX + (toX - fromX) * t),
+      y: Math.floor(fromY + (toY - fromY) * t),
+    });
+  }
+  actions.push({ type: "pointerUp", button: 0 });
+  await browser.performActions([{ type: "pointer", id: "finger1", parameters: { pointerType: "mouse" }, actions }]);
   await browser.releaseActions();
 }
 
@@ -215,24 +243,34 @@ async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
     return p?.textContent?.trim().slice(0, 80) ?? "";
   })) as string;
   let last: Record<string, unknown> = {};
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     const size = await block.getSize();
+    const loc = await block.getLocation();
     const w = size.width;
     const h = size.height;
     if (w < 8 || h < 4) throw new Error(`foliate text block too small: ${w}x${h}`);
     const y = Math.max(1, Math.floor(h / 2));
     const x1 = 2;
     const x2 = Math.min(w - 2, Math.max(x1 + 6, w - 2));
+    const mode = attempt % 3;
     try {
-      await pointerDragOnElement(block, x1, y, x2, y);
+      if (mode === 0) await pointerDragOnElement(block, x1, y, x2, y, 420);
+      else if (mode === 1) await pointerDragOnElementSteps(block, x1, y, x2, y);
+      else {
+        const vx1 = loc.x + x1;
+        const vy = loc.y + y;
+        const vx2 = loc.x + x2;
+        await pointerDragViewport(vx1, vy, vx2, vy, 520);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("out of bounds") && attempt < 3) {
+      if (msg.includes("out of bounds") && attempt < 5) {
         await browser.pause(250);
         continue;
       }
       throw e;
     }
+    await browser.pause(120);
     const inFrameSelection = (await browser.execute(function () {
       const t = window.getSelection()?.toString().trim() ?? "";
       const api = (window.top ?? window).__MARGINALIA_SMOKE_API__ as
