@@ -140,23 +140,124 @@ export class PdfReader {
     return null;
   }
 
-  paintHighlight(_layer: HTMLElement, range: Range): void {
-    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
-    mark.className = "quote-highlight";
-    mark.style.backgroundColor = "#f0c84b";
-    mark.style.borderRadius = "3px";
-    mark.style.color = "inherit";
-    try {
-      range.surroundContents(mark);
-    } catch {
-      const text = range.extractContents();
-      mark.appendChild(text);
-      range.insertNode(mark);
+  paintHighlight(layer: HTMLElement, range: Range): void {
+    // Multi-span / multi-line PDF selections cannot use surroundContents safely.
+    // Wrap each intersecting text node (or paint rect overlays as fallback).
+    if (this.paintHighlightByTextNodes(range)) return;
+    this.paintHighlightByClientRects(layer, range);
+  }
+
+  private paintHighlightByTextNodes(range: Range): boolean {
+    const doc = range.startContainer.ownerDocument ?? document;
+    const root = range.commonAncestorContainer;
+    const walkerRoot =
+      root.nodeType === Node.ELEMENT_NODE ? (root as HTMLElement) : root.parentElement;
+    if (!walkerRoot) return false;
+    const nodes: Text[] = [];
+    const walker = doc.createTreeWalker(walkerRoot, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      if (!node.data.trim()) continue;
+      try {
+        if (
+          range.comparePoint(node, 0) <= 0 &&
+          range.comparePoint(node, node.data.length) >= 0
+        ) {
+          nodes.push(node);
+          continue;
+        }
+        // Partial overlap
+        if (
+          range.comparePoint(node, 0) === 1 &&
+          range.comparePoint(node, node.data.length) === -1
+        ) {
+          continue;
+        }
+        const intersects =
+          !(range.comparePoint(node, node.data.length) < 0 || range.comparePoint(node, 0) > 0);
+        if (intersects) nodes.push(node);
+      } catch {
+        /* comparePoint can throw across documents */
+      }
+    }
+    if (!nodes.length) return false;
+    let painted = 0;
+    for (const node of nodes) {
+      let start = 0;
+      let end = node.data.length;
+      if (node === range.startContainer) start = range.startOffset;
+      if (node === range.endContainer) end = range.endOffset;
+      if (start >= end) {
+        if (node !== range.startContainer && node !== range.endContainer) {
+          start = 0;
+          end = node.data.length;
+        } else continue;
+      }
+      try {
+        const piece = doc.createRange();
+        piece.setStart(node, start);
+        piece.setEnd(node, end);
+        const mark = doc.createElement("mark");
+        mark.className = "quote-highlight";
+        mark.style.backgroundColor = "#f0c84b";
+        mark.style.borderRadius = "3px";
+        mark.style.color = "inherit";
+        piece.surroundContents(mark);
+        painted += 1;
+      } catch {
+        try {
+          const piece = doc.createRange();
+          piece.setStart(node, start);
+          piece.setEnd(node, end);
+          const mark = doc.createElement("mark");
+          mark.className = "quote-highlight";
+          mark.style.backgroundColor = "#f0c84b";
+          mark.style.borderRadius = "3px";
+          mark.style.color = "inherit";
+          const frag = piece.extractContents();
+          mark.appendChild(frag);
+          piece.insertNode(mark);
+          painted += 1;
+        } catch {
+          /* continue */
+        }
+      }
+    }
+    return painted > 0;
+  }
+
+  private paintHighlightByClientRects(layer: HTMLElement, range: Range): void {
+    const doc = layer.ownerDocument ?? document;
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+    if (!rects.length) return;
+    const layerRect = layer.getBoundingClientRect();
+    let overlay = layer.querySelector<HTMLElement>(":scope > .quote-highlight-overlay-root");
+    if (!overlay) {
+      overlay = doc.createElement("div");
+      overlay.className = "quote-highlight-overlay-root";
+      overlay.style.position = "absolute";
+      overlay.style.inset = "0";
+      overlay.style.pointerEvents = "none";
+      overlay.style.zIndex = "2";
+      if (getComputedStyle(layer).position === "static") layer.style.position = "relative";
+      layer.appendChild(overlay);
+    }
+    for (const r of rects) {
+      const box = doc.createElement("div");
+      box.className = "quote-highlight quote-highlight--rect";
+      box.style.position = "absolute";
+      box.style.left = `${r.left - layerRect.left + layer.scrollLeft}px`;
+      box.style.top = `${r.top - layerRect.top + layer.scrollTop}px`;
+      box.style.width = `${r.width}px`;
+      box.style.height = `${r.height}px`;
+      box.style.backgroundColor = "rgba(240, 200, 75, 0.45)";
+      box.style.borderRadius = "2px";
+      overlay.appendChild(box);
     }
   }
 
   highlightPaintCount(): number {
-    return this.opts.container.querySelectorAll("mark.quote-highlight").length;
+    return this.opts.container.querySelectorAll("mark.quote-highlight, .quote-highlight--rect").length;
   }
 
   async restoreHighlights(

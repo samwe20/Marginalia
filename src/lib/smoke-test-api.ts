@@ -67,6 +67,9 @@ export type SmokeTestApi = {
   libraryCoverDiagnostics: () => Promise<
     { slug: string; kind: string; hasCachedImage: boolean; hasTypographicOnly: boolean }[]
   >;
+  brokenCoverImageCount: () => number;
+  readerContentColors: () => { color: string; background: string; theme: string };
+  setAppTheme: (pref: "light" | "dark" | "system") => void;
 };
 
 declare global {

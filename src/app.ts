@@ -3,6 +3,7 @@ import {
   openLibraryIndex,
   saveQuote,
   updateQuoteComment,
+  syncQuotesBookMeta,
   loadQuotesForBook,
   loadAllQuotesFromLibrary,
   ensureBookCard,
@@ -26,7 +27,7 @@ import {
 } from "./lib/file-metadata";
 import { formatCitation, type CitationStyleId } from "./lib/citation-format";
 import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/reader-bibliography";
-import { renderBookCoverMarkup } from "./ui/book-cover";
+import { bindCoverImageFallbacks, renderBookCoverMarkup } from "./ui/book-cover";
 import { renderTypographicCoverHtml } from "./lib/typographic-cover";
 import { enqueueCoverGeneration, setCustomBookCover, coverImageUrl } from "./lib/book-cover-cache";
 import { bookSlug } from "./lib/paths";
@@ -45,6 +46,8 @@ import { smokeVerifyDialogPlugin } from "./lib/open-book";
 import { type BookFileKind, detectBookFileKind, mimeForBookFileName } from "./lib/book-formats";
 import { createDocumentsMarginaliaFolder, ensureLibrarySubdirs } from "./lib/library-root";
 import { syncAllBooksFromLibraryFolder } from "./lib/library-import";
+import { parseFilenameMeta, looksLikeTechnicalSlug } from "./lib/filename-meta";
+import { formatReadableLocus } from "./lib/quote-locus";
 import {
   hideLibrarySetupModal,
   isLibrarySetupModalVisible,
@@ -78,11 +81,8 @@ import {
   getDemoQuotes,
   getDemoQuotesForBook,
   isDemoEnabled,
-  searchDemoNotes,
   searchDemoQuotes,
 } from "./lib/demo-data";
-import { listNotes } from "./lib/notes";
-import { searchNotesLocal, snippetForNote } from "./lib/note-search-index";
 import { escapeAttr, escapeHtml } from "./lib/html";
 import type { QuoteDocument } from "./lib/quote-markdown";
 import { icons } from "./ui/icons";
@@ -106,7 +106,7 @@ import { renderFolioBacklinksPanel } from "./ui/folio-backlinks";
 import { renderNotesView } from "./ui/notes-view";
 import { mountToastRegion } from "./ui/toast";
 
-type Route = "library" | "quotes" | "notes" | "search" | "settings" | "reader";
+type Route = "library" | "quotes" | "notes" | "settings" | "reader";
 
 type RecentBook = LibraryBookEntry;
 
@@ -114,7 +114,6 @@ const ROUTE_LABEL: Record<Exclude<Route, "reader">, string> = {
   library: "Knihovna",
   quotes: "Citace",
   notes: "Poznámky",
-  search: "Hledat",
   settings: "Nastavení",
 };
 
@@ -191,7 +190,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   sidebar.setAttribute("aria-label", "Navigace");
   sidebar.innerHTML = `
     <div class="sidebar-brand">
-      <div class="brand-mark" aria-hidden="true"></div>
+      <div class="brand-mark" aria-hidden="true"><img src="/marginalia-icon.png" alt="" width="34" height="34" /></div>
       <div class="brand-copy">
         <span class="brand-name">Marginália</span>
         <span class="brand-tag">Citace z knih</span>
@@ -202,7 +201,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       <button type="button" class="nav-item" data-route="library"><span class="icon">${icons.library}</span><span>Knihovna</span></button>
       <button type="button" class="nav-item" data-route="quotes"><span class="icon">${icons.quotes}</span><span>Citace</span></button>
       <button type="button" class="nav-item" data-route="notes"><span class="icon">${icons.notes}</span><span>Poznámky</span></button>
-      <button type="button" class="nav-item" data-route="search"><span class="icon">${icons.search}</span><span>Hledat</span></button>
       <button type="button" class="nav-item" data-route="settings"><span class="icon">${icons.settings}</span><span>Nastavení</span></button>
     </div>
   `;
@@ -307,20 +305,24 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const author =
       bibliography.authors.map((a) => `${a.given} ${a.family}`.trim()).filter(Boolean).join(", ") ||
       state.book.author;
+    const title = bibliography.title.trim() || state.book.title;
     state.book.author = author;
+    state.book.title = title;
     await updateBookCardBibliography(state.libraryRoot, state.slug, bibliography, {
       userEdited: true,
-      title: bibliography.title || state.book.title,
+      title,
     });
+    await syncQuotesBookMeta(state.libraryRoot, state.slug, { title, author });
     const kind = detectBookFileKind(state.book.filePath) ?? "pdf";
     pushRecent({
       slug: state.slug,
       kind,
-      title: state.book.title,
+      title,
       author,
       sha256: state.book.sha256,
       filePath: state.book.filePath,
     });
+    setContextTitle(title);
     if (state.route === "reader") await refreshInspectorAfterQuoteSave(state.slug);
     if (state.route === "quotes") await renderQuotesOverview();
   };
@@ -352,14 +354,50 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const bindQuoteCommentEditors = (root: ParentNode) => {
+    const paintCommentPreview = (el: HTMLTextAreaElement) => {
+      const id = el.dataset.quoteComment!;
+      let preview = el.parentElement?.querySelector<HTMLElement>(
+        `[data-quote-comment-preview="${CSS.escape(id)}"]`,
+      );
+      if (!preview) {
+        preview = document.createElement("div");
+        preview.className = "quote-card__comment-preview md-body";
+        preview.dataset.quoteCommentPreview = id;
+        el.insertAdjacentElement("afterend", preview);
+      }
+      const text = el.value;
+      if (!text.includes("[[")) {
+        preview.hidden = true;
+        preview.innerHTML = "";
+        return;
+      }
+      preview.hidden = false;
+      preview.innerHTML = renderMarkdown(text, linkIndex, { allowRemoteImages: false });
+      preview.querySelectorAll("a[data-wiki-title]").forEach((a) => {
+        a.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          openWiki((a as HTMLElement).dataset.wikiTitle!, true);
+        });
+      });
+    };
+
     root.querySelectorAll<HTMLTextAreaElement>("[data-quote-comment]").forEach((el) => {
+      paintCommentPreview(el);
       if (el.dataset.bound === "1") return;
       el.dataset.bound = "1";
+      el.addEventListener("input", () => paintCommentPreview(el));
       el.addEventListener("blur", () => {
-        if (!state.slug || !state.libraryRoot) return;
+        if (!state.libraryRoot) return;
         const quoteId = el.dataset.quoteComment!;
-        void updateQuoteComment(state.libraryRoot, state.slug, quoteId, el.value)
-          .then(() => toast("Poznámka uložena", "success"))
+        const card = el.closest(".quote-card") as HTMLElement | null;
+        const slug = state.slug || card?.dataset.bookSlug || "";
+        if (!slug) return;
+        void updateQuoteComment(state.libraryRoot, slug, quoteId, el.value)
+          .then(async () => {
+            toast("Poznámka uložena", "success");
+            await reindexLinks();
+            paintCommentPreview(el);
+          })
           .catch(() => toast("Poznámku se nepodařilo uložit", "error"));
       });
     });
@@ -424,12 +462,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return;
     }
     const bookAuthor = state.book?.author ?? "";
+    const bookTitle = state.book?.title ?? "";
     inspectorBody.innerHTML = `<ul class="quote-list inspector-quote-list">${docs
       .map((d) =>
         renderUserQuoteCardHtml(d, {
           showCommentEditor: true,
           bookAuthorFallback: bookAuthor,
+          bookTitleFallback: bookTitle,
           bibliography: state.bibliography,
+          listAttrs: { "data-book-slug": d.meta.book_slug },
         }),
       )
       .join("")}</ul>`;
@@ -481,6 +522,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       void renderQuotesOverview();
     }
     if (route === "notes") {
+      // Search lives on Notes/Library/Quotes pages (sidebar Hledat removed).
       void (async () => {
         if (!(await requireLibraryConfigured())) return;
         void renderNotesView(
@@ -496,7 +538,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         );
       })();
     }
-    if (route === "search") renderSearch();
     if (route === "settings") renderSettings();
     syncReadingChrome();
   };
@@ -594,6 +635,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       <div class="page">
         <h1>Knihovna</h1>
         <p class="page-intro">PDF, EPUB a MOBI/AZW ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
+        <label class="field field--inline page-search">
+          <span class="sr-only">Hledat v knihovně</span>
+          <input type="search" id="library-filter" placeholder="Hledat knihy…" autocomplete="off" />
+        </label>
         <div class="page-actions">
           <button type="button" class="primary-btn" id="btn-rescan-books" data-testid="btn-rescan-books">Obnovit knihy ze složky</button>
           <button type="button" class="ghost-btn solid" id="btn-library-folder">Změnit složku knihovny…</button>
@@ -635,6 +680,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       });
     });
     bindDemoNavigation();
+    bindCoverImageFallbacks(stageMain);
+    const libFilter = stageMain.querySelector<HTMLInputElement>("#library-filter");
+    libFilter?.addEventListener("input", () => {
+      const q = libFilter.value.trim().toLowerCase();
+      stageMain.querySelectorAll<HTMLElement>(".book-card:not(.book-card--demo)").forEach((card) => {
+        const hay = `${card.dataset.title || ""} ${card.dataset.author || ""}`.toLowerCase();
+        card.style.display = !q || hay.includes(q) ? "" : "none";
+      });
+    });
     if (state.libraryRoot && recent.length) {
       void enqueueCoverGeneration(
         state.libraryRoot,
@@ -646,18 +700,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           author: b.author,
           filePath: b.filePath,
         })),
+        () => {
+          if (state.route === "library") void renderLibrary();
+        },
       );
     }
   };
 
   const renderQuotesOverview = async () => {
     const userQuotes = state.libraryRoot ? await loadAllQuotesFromLibrary(state.libraryRoot) : [];
-    const authorBySlug = new Map(
-      (state.libraryRoot ? await listLibraryBooksFromDisk(state.libraryRoot) : []).map((b) => [
-        b.slug,
-        b.author,
-      ]),
-    );
+    const libraryBooks = state.libraryRoot ? await listLibraryBooksFromDisk(state.libraryRoot) : [];
+    const authorBySlug = new Map(libraryBooks.map((b) => [b.slug, b.author]));
+    const titleBySlug = new Map(libraryBooks.map((b) => [b.slug, b.title]));
     if (userQuotes.length) {
       const paintUserQuotes = (filter: string) => {
         const q = filter.trim().toLowerCase();
@@ -681,8 +735,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
               .map((d) =>
                 renderUserQuoteCardHtml(d, {
                   showCommentEditor: true,
-                  listAttrs: { "data-user-quote": d.meta.id },
+                  listAttrs: { "data-user-quote": d.meta.id, "data-book-slug": d.meta.book_slug },
                   bookAuthorFallback: authorBySlug.get(d.meta.book_slug),
+                  bookTitleFallback: titleBySlug.get(d.meta.book_slug),
                 }),
               )
               .join("")
@@ -692,18 +747,19 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       stageMain.innerHTML = `
         <div class="page page--wide" data-quotes-ready="1">
           <h1>Databáze citací</h1>
-          <p class="muted page-intro">Full-text přes celou knihovnu: záložka <strong>Hledat</strong>. Zde můžete rychle filtrovat seznam.</p>
-          <label class="field field--inline quotes-filter">
-            <span>Filtrovat</span>
-            <input type="search" id="quotes-filter" placeholder="Text citace, poznámky, autor, kniha…" autocomplete="off" />
+          <p class="muted page-intro">Hledejte přímo zde — text citace, poznámky, autor nebo kniha.</p>
+          <label class="field field--inline quotes-filter page-search">
+            <span class="sr-only">Hledat v citacích</span>
+            <input type="search" id="quotes-filter" placeholder="Hledat v citacích…" autocomplete="off" />
           </label>
           <p class="muted results-count">${userQuotes.length} citací z knihovny</p>
           <ul class="quote-list user-quote-list">${userQuotes
             .map((d) =>
               renderUserQuoteCardHtml(d, {
                 showCommentEditor: true,
-                listAttrs: { "data-user-quote": d.meta.id },
+                listAttrs: { "data-user-quote": d.meta.id, "data-book-slug": d.meta.book_slug },
                 bookAuthorFallback: authorBySlug.get(d.meta.book_slug),
+                bookTitleFallback: titleBySlug.get(d.meta.book_slug),
               }),
             )
             .join("")}</ul>
@@ -775,147 +831,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     bindDemoNavigation();
   };
 
-  const renderSearch = () => {
-    stageMain.innerHTML = `
-      <div class="page">
-        <h1>Hledat citace a poznámky</h1>
-        <p class="muted page-intro">Full-text přes uložené citace i poznámky ve vaší knihovně (desktop index). Stačí pár písmen.</p>
-        <label class="field">
-          <span>Dotaz</span>
-          <div class="search-field-row">
-            <input type="search" id="search-input" placeholder="Napište slovo nebo frázi…" autocomplete="off" />
-            <button type="button" class="primary-btn" id="btn-search-run">Hledat</button>
-          </div>
-        </label>
-        <div id="search-results" aria-live="polite"></div>
-      </div>
-    `;
-    const input = stageMain.querySelector<HTMLInputElement>("#search-input")!;
-    input.focus();
-    const runSearch = async (q: string) => {
-      const box = stageMain.querySelector("#search-results")!;
-      if (!q) {
-        box.innerHTML = "";
-        return;
-      }
-      const parts: string[] = [];
-      if (isDemoEnabled()) {
-        const demoHits = searchDemoQuotes(q);
-        if (demoHits.length) {
-          const bookMap = new Map(getDemoBooks().map((b) => [b.slug, b]));
-          parts.push(
-            `<section><h2 class="section-title">Ukázková data — citace</h2><div class="quote-db-grid">${demoHits
-              .map((hit) => renderQuoteDbCard(hit, bookMap.get(hit.bookSlug)))
-              .join("")}</div></section>`,
-          );
-        }
-        const demoNoteHits = searchDemoNotes(q);
-        if (demoNoteHits.length) {
-          parts.push(
-            `<section><h2 class="section-title">Ukázková data — poznámky</h2><ul class="search-note-list">${demoNoteHits
-              .map(
-                (n) =>
-                  `<li><button type="button" class="search-note-card" data-demo-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote({ ...n, filename: n.filename }, q))}</span></button></li>`,
-              )
-              .join("")}</ul></section>`,
-          );
-        }
-      }
-      if (!isTauri()) {
-        const userNotes = await listNotes(state.libraryRoot);
-        if (userNotes.length) {
-          const localHits = searchNotesLocal(userNotes, q);
-          if (localHits.length) {
-            parts.push(
-              `<section><h2 class="section-title">Poznámky (web)</h2><ul class="search-note-list">${localHits
-                .map(
-                  (n) =>
-                    `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(n.id)}"><span class="search-note-card__title">${escapeHtml(n.title)}</span><span class="search-note-card__snippet">${escapeHtml(snippetForNote(n, q))}</span></button></li>`,
-                )
-                .join("")}</ul></section>`,
-            );
-          }
-        }
-      }
-
-      const paintResults = () => {
-        if (!parts.length) {
-          box.innerHTML = `<p class="muted">Nic nenalezeno.</p>`;
-          return;
-        }
-        box.innerHTML = parts.join("");
-        bindDemoNavigation();
-        stageMain.querySelectorAll("[data-demo-note]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            activeNoteId = (btn as HTMLElement).dataset.demoNote!;
-            setRoute("notes");
-          });
-        });
-        stageMain.querySelectorAll("[data-user-note]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            activeNoteId = (btn as HTMLElement).dataset.userNote!;
-            setRoute("notes");
-          });
-        });
-      };
-
-      paintResults();
-
-      if (isTauri() && state.libraryRoot) {
-        try {
-          await openLibraryIndex(state.libraryRoot);
-          const { invoke } = await import("@tauri-apps/api/core");
-          type IndexHit = {
-            hit_kind: string;
-            quote_id?: string;
-            book_slug?: string;
-            note_id?: string;
-            note_title?: string;
-            snippet: string;
-          };
-          const hits = (await invoke("index_search", { query: q, limit: 24 })) as IndexHit[];
-          const quoteHits = hits.filter((h) => h.hit_kind === "quote");
-          const noteHits = hits.filter((h) => h.hit_kind === "note");
-          if (quoteHits.length) {
-            parts.push(
-              `<section><h2 class="section-title">Vaše knihovna — citace</h2><ul class="quote-list">${quoteHits
-                .map((h) => `<li class="quote-card">${escapeHtml(h.snippet)}</li>`)
-                .join("")}</ul></section>`,
-            );
-          }
-          if (noteHits.length) {
-            parts.push(
-              `<section><h2 class="section-title">Vaše knihovna — poznámky</h2><ul class="search-note-list">${noteHits
-                .map(
-                  (h) =>
-                    `<li><button type="button" class="search-note-card" data-user-note="${escapeAttr(h.note_id ?? "")}"><span class="search-note-card__title">${escapeHtml(h.note_title ?? "Poznámka")}</span><span class="search-note-card__snippet">${escapeHtml(h.snippet)}</span></button></li>`,
-                )
-                .join("")}</ul></section>`,
-            );
-          }
-          paintResults();
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    };
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter") return;
-      void runSearch(input.value.trim());
-    });
-    const scheduleSearchFromInput = () => {
-      const q = input.value.trim();
-      if (q.length >= 2) void runSearch(q);
-    };
-    input.addEventListener("input", scheduleSearchFromInput);
-    input.addEventListener("change", scheduleSearchFromInput);
-    input.addEventListener("keyup", scheduleSearchFromInput);
-    input.addEventListener("focus", scheduleSearchFromInput);
-    stageMain.querySelector("#btn-search-run")?.addEventListener("click", () => {
-      void runSearch(input.value.trim());
-    });
-  };
-
   const renderSettings = () => {
     const demoOn = isDemoEnabled();
     const themePref = themeCtrl.getPreference();
@@ -938,7 +853,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         </div>
         <hr class="settings-sep" />
         <h2 class="section-title">Čtení EPUB/MOBI</h2>
-        <p class="muted">Posouvání: text plyne svisle, tlačítka přeskakují kapitoly. Stránkování: jeden sloupec na stránku, tlačítka listují.</p>
+        <p class="muted">Posouvání: plynulý scroll celé knihy (kapitoly na sebe navazují); šipky skáčou na kapitolu. Stránkování: jeden sloupec na stránku, tlačítka listují.</p>
         <div class="theme-picker" role="radiogroup" aria-label="Režim čtení">
           ${(
             [
@@ -967,6 +882,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       btn.addEventListener("click", () => {
         const pref = (btn as HTMLElement).dataset.themePref as "system" | "light" | "dark";
         themeCtrl.setPreference(pref);
+        epub?.refreshTheme?.();
         toast(
           pref === "system" ? "Motiv: podle systému" : pref === "light" ? "Motiv: světlý" : "Motiv: tmavý",
           "success",
@@ -1152,9 +1068,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     epub = null;
     inspectorBody.innerHTML = `<p class="muted">Načítám citace knihy…</p>`;
 
+    const fromName = parseFilenameMeta(fileName);
     state.book = {
-      title: fileName.replace(/\.[^.]+$/, ""),
-      author: "",
+      title: fromName.title,
+      author: fromName.author,
       sha256: sha,
       filePath: opts.storedPath ?? fileName,
     };
@@ -1171,8 +1088,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     state.slug = slug;
     const existingCard = await loadBookCard(state.libraryRoot, slug);
     if (existingCard) {
-      if (existingCard.title.trim()) state.book.title = existingCard.title.trim();
-      state.book.author = existingCard.author?.trim() ?? "";
+      const cardTitle = existingCard.title.trim();
+      if (cardTitle && !looksLikeTechnicalSlug(cardTitle)) state.book.title = cardTitle;
+      else if (fromName.title) state.book.title = fromName.title;
+      const cardAuthor = existingCard.author?.trim() ?? "";
+      state.book.author = cardAuthor || fromName.author;
       state.bibliography = { ...existingCard.bibliography, authors: [...existingCard.bibliography.authors] };
     } else {
       state.bibliography = migrateBibliographyFromCard(state.book.title, state.book.author, null);
@@ -1222,7 +1142,24 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           if (!saved) toast("Nejdřív označte text v knize", "info");
         },
         onHighlight: async ({ text, cfi, anchor }) => {
-          await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
+          const progress = epub?.sectionProgress?.() ?? { index: null, count: 0, percent: null };
+          const locus = formatReadableLocus({
+            pageOrCfi: cfi,
+            chapterTitle: epub?.chapterTitleForCurrentSection?.() ?? null,
+            sectionIndex: progress.index,
+            sectionCount: progress.count,
+            percent: progress.percent,
+          });
+          await saveQuote(state.libraryRoot, state.book!, state.slug, text, locus, {
+            ...anchor,
+            selectors: [
+              ...anchor.selectors,
+              // Keep CFI internally even when page label is human-readable.
+              ...(cfi && !anchor.selectors.some((s) => "value" in s && (s as { value?: string }).value === cfi)
+                ? [{ type: "FragmentSelector" as const, conformsTo: "http://idpf.org/epub/fragment" as const, value: cfi }]
+                : []),
+            ],
+          });
           await refreshInspectorAfterQuoteSave(state.slug);
           toast("Citace uložena", "success");
         },
@@ -1525,6 +1462,23 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       }
       return out;
     },
+    brokenCoverImageCount: () =>
+      document.querySelectorAll(".book-card__cover-image").length === 0
+        ? 0
+        : Array.from(document.querySelectorAll<HTMLImageElement>(".book-card__cover-image")).filter(
+            (img) => !img.complete || img.naturalWidth === 0,
+          ).length,
+    readerContentColors: () => {
+      const probe = epub?.contentThemeProbe?.() ?? { color: "", background: "" };
+      return {
+        ...probe,
+        theme: document.querySelector("#app")?.getAttribute("data-theme") ?? "",
+      };
+    },
+    setAppTheme: (pref: "light" | "dark" | "system") => {
+      themeCtrl.setPreference(pref);
+      epub?.refreshTheme?.();
+    },
     triggerCopyCitation: async (style: CitationStyleId) => {
       const btn = inspectorBody.querySelector(`[data-copy-citation="${style}"]`) as HTMLButtonElement | null;
       if (!btn) throw new Error(`No citation button for ${style}`);
@@ -1584,7 +1538,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     if (ev.ctrlKey && ev.key.toLowerCase() === "f") {
       ev.preventDefault();
-      setRoute("search");
+      setRoute("quotes");
     }
     if (ev.key === "Escape" && state.route === "reader") {
       state.inspectorOpen = false;

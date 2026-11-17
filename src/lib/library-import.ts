@@ -4,6 +4,7 @@ import { findBookFilesOnDisk, isPathInsideLibrary } from "./library-scan";
 import { ensureBookCard, type BookMeta } from "./storage";
 import { loadBookCard, persistBookFile, type LibraryBookEntry } from "./book-library";
 import { isTauri } from "./runtime";
+import { looksLikeTechnicalSlug, parseFilenameMeta } from "./filename-meta";
 
 export type ImportRecentPush = (book: LibraryBookEntry) => void;
 
@@ -28,15 +29,29 @@ export async function registerBookFromDiskPath(
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const sha = await sha256Hex(buffer);
   const name = filePath.replace(/^.*[/\\]/, "");
-  const title = name.replace(/\.[^.]+$/, "");
+  const parsed = parseFilenameMeta(name);
+  const title = parsed.title;
+  const authorFromName = parsed.author;
   const slug = bookSlug(title, sha);
   const existing = await loadBookCard(libraryRoot, slug);
   if (existing?.sha256 === sha && existing.path) {
+    let nextTitle = existing.title || title;
+    let nextAuthor = existing.author || authorFromName;
+    if (looksLikeTechnicalSlug(nextTitle) && title) nextTitle = title;
+    if (!nextAuthor && authorFromName) nextAuthor = authorFromName;
+    if (nextTitle !== existing.title || nextAuthor !== (existing.author ?? "")) {
+      await ensureBookCard(libraryRoot, {
+        title: nextTitle,
+        author: nextAuthor,
+        sha256: sha,
+        filePath: existing.path,
+      });
+    }
     pushRecent({
       slug,
       kind: bookKind(name),
-      title: existing.title || title,
-      author: existing.author ?? "",
+      title: nextTitle,
+      author: nextAuthor,
       sha256: sha,
       filePath: existing.path,
     });
@@ -51,7 +66,7 @@ export async function registerBookFromDiskPath(
 
   await ensureBookCard(libraryRoot, {
     title,
-    author: "",
+    author: authorFromName,
     sha256: sha,
     filePath: storedPath,
   } satisfies BookMeta);
@@ -60,7 +75,7 @@ export async function registerBookFromDiskPath(
     slug,
     kind: bookKind(name),
     title,
-    author: "",
+    author: authorFromName,
     sha256: sha,
     filePath: storedPath,
     updated: new Date().toISOString(),
