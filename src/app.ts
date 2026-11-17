@@ -644,16 +644,40 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const label = ROUTE_LABEL[route as Exclude<Route, "reader">];
     setContextTitle(label);
+    // Leaving the reader: drop live readers so route shells own stageMain cleanly.
+    if (route !== "reader") {
+      pdfPageCounterDetach?.();
+      pdfPageCounterDetach = null;
+      pdf?.destroy();
+      epub?.destroy();
+      pdf = null;
+      epub = null;
+    }
     if (route === "library") void renderLibrary();
     if (route === "quotes") {
       stageMain.innerHTML = `<div class="page" data-quotes-loading="1"><p class="muted">Načítám citace…</p></div>`;
       void renderQuotesOverview();
     }
     if (route === "notes") {
-      // Search lives on Notes/Library/Quotes pages (sidebar Hledat removed).
+      // Paint shell synchronously (same pattern as Quotes) so .notes-layout exists
+      // before the async library gate + full remount — otherwise WDIO/openNotes can
+      // observe a missing layout during the await gap after leaving the reader.
+      stageMain.innerHTML = `
+        <div class="notes-layout" data-notes-loading="1">
+          <aside class="notes-list">
+            <div class="notes-list__header">
+              <h2 class="section-title">Poznámky</h2>
+            </div>
+            <p class="muted notes-list__items">Načítání…</p>
+          </aside>
+          <div class="notes-editor-pane">
+            <div id="editor-root" class="editor-root"></div>
+          </div>
+          <aside class="backlinks-pane notes-backlinks" id="note-backlinks-pane"></aside>
+        </div>`;
       void (async () => {
         if (!(await requireLibraryConfigured())) return;
-        void renderNotesView(
+        await renderNotesView(
           stageMain,
           {
             libraryRoot: state.libraryRoot,
