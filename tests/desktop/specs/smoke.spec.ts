@@ -117,59 +117,101 @@ async function pointerSelectPdfText(): Promise<void> {
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
-async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: number; y2: number; space: string }> {
+async function resolveFoliateShadowIframe(): Promise<WebdriverIO.Element | null> {
+  const host = await $("#epub-root foliate-view");
+  if (!(await host.isExisting())) return null;
+  try {
+    const paginator = await host.shadow$("foliate-paginator");
+    if (await paginator.isExisting()) {
+      const ifr = await paginator.shadow$("iframe");
+      if (await ifr.isExisting()) return ifr;
+    }
+  } catch {
+    /* foliate closed shadow */
+  }
+  try {
+    const ifr = await host.shadow$("iframe");
+    if (await ifr.isExisting()) return ifr;
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+async function dumpEpubPointerFailure(stage: string): Promise<never> {
+  try {
+    await browser.switchToFrame(null);
+  } catch {
+    /* */
+  }
+  await saveScreenshot(`smoke-epub-fail-${stage.replace(/[^a-z0-9_-]+/gi, "-")}.png`);
+  const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+  fs.mkdirSync(artifactDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(artifactDir, `smoke-epub-diag-${stage.replace(/[^a-z0-9_-]+/gi, "-")}.json`),
+    JSON.stringify({ stage, diag }, null, 2),
+  );
+  throw new Error(`EPUB/MOBI pointer/H (${stage}): ${JSON.stringify(diag)}`);
+}
+
+async function dragSelectInCurrentFrame(): Promise<{ x: number; y: number; x2: number; y2: number }> {
+  const textEl = (await $("p, span")) as WebdriverIO.Element;
+  await textEl.waitForExist({ timeout: 8_000 });
+  const local = (await browser.execute(function () {
+    const p = document.querySelector("p, span");
+    if (!p) return null;
+    const r = p.getBoundingClientRect();
+    if (r.width < 8 || r.height < 4) return null;
+    return {
+      x: 6,
+      y: Math.floor(r.height / 2),
+      x2: Math.floor(r.width - 6),
+      y2: Math.floor(r.top + r.height / 2),
+    };
+  })) as { x: number; y: number; x2: number; y2: number } | null;
+  if (!local) throw new Error("no p/span in foliate content frame");
+  await pointerDragOnElement(textEl, local.x, local.y, local.x2, local.y2);
+  return local;
+}
+
+async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   await callSmokeApi<number>("ensureEpubReaderReady");
   const renderInfo = await callSmokeApi<{ mode: string }>("epubReaderRenderInfo");
-  const iframeInLightDom = await browser.execute(function () {
-    return !!document.querySelector("#epub-root iframe");
-  });
-  if (renderInfo.mode === "iframe" && iframeInLightDom) {
-    const iframe = await $("#epub-root iframe");
-    await iframe.waitForExist({ timeout: 5_000 });
-    await browser.switchToFrame(iframe);
-    const block = (await $("p, span, body")) as WebdriverIO.Element;
-    const local = (await browser.execute(function () {
-      const p = document.querySelector("p, span");
-      if (!p) return null;
-      const r = p.getBoundingClientRect();
-      if (r.width < 8) return null;
-      return {
-        x: 6,
-        y: Math.floor(r.height / 2),
-        x2: Math.floor(r.width - 6),
-        y2: Math.floor(r.height / 2),
-      };
-    })) as { x: number; y: number; x2: number; y2: number } | null;
-    if (!local) {
-      await browser.switchToFrame(null);
-      throw new Error("EPUB iframe text block missing for pointer selection");
-    }
-    await pointerDragOnElement(block, local.x, local.y, local.x2, local.y2);
-    await browser.switchToFrame(null);
-    let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+  if (renderInfo.mode === "fallback") {
+    const rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
       "epubPointerSelectionRect",
     );
-    if (!rect) rect = local;
-    return { ...rect, space: "iframe-frame" };
+    if (!rect) return dumpEpubPointerFailure("fallback-no-pointer-rect");
+    await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
+    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
-  let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+  const ifr = await resolveFoliateShadowIframe();
+  if (!ifr) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
+  await browser.switchToFrame(ifr);
+  let shadowDrag: { x: number; y: number; x2: number; y2: number };
+  try {
+    shadowDrag = await dragSelectInCurrentFrame();
+  } catch (e) {
+    await browser.switchToFrame(null);
+    return dumpEpubPointerFailure(`shadow-drag-error-${String(e)}`);
+  }
+  await browser.switchToFrame(null);
+  const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+  const sel = diag.selection as { selections: unknown[]; mainSelectionLength: number };
+  if (!sel.selections?.length && (sel.mainSelectionLength ?? 0) < 4) {
+    return dumpEpubPointerFailure("after-shadow-drag-no-selection");
+  }
+  const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
   );
-  if (!rect) {
-    await browser.pause(800);
-    rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
-      "epubPointerSelectionRect",
-    );
-  }
-  if (!rect) throw new Error("EPUB/MOBI reader text not found for pointer selection");
-  await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-  const space =
-    renderInfo.mode === "fallback"
-      ? "fallback"
-      : renderInfo.mode === "iframe"
-        ? "iframe-viewport"
-        : "viewport";
-  return { ...rect, space };
+  return {
+    space: "foliate-shadow-iframe",
+    shadowDrag,
+    viewport,
+    selectionAfterDrag: diag.selection,
+    renderInfo,
+  };
 }
 
 async function pressHighlightSaveKey() {
@@ -452,10 +494,14 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const afterSelect = (await quoteFilesOnDisk(slug)).length;
       if (afterSelect !== before) throw new Error(`EPUB selection alone created quote (${before} → ${afterSelect})`);
       await pressHighlightSaveKey();
-      await browser.waitUntil(
-        async () => (await quoteFilesOnDisk(slug)).length > before,
-        { timeout: 20_000, timeoutMsg: "EPUB quote .md after H" },
-      );
+      try {
+        await browser.waitUntil(
+          async () => (await quoteFilesOnDisk(slug)).length > before,
+          { timeout: 20_000, timeoutMsg: "EPUB quote .md after H" },
+        );
+      } catch {
+        await dumpEpubPointerFailure("s15-after-H-no-quote-md");
+      }
       const afterH = (await quoteFilesOnDisk(slug)).length;
       if (afterH !== before + 1) {
         throw new Error(`expected exactly one new quote .md after H (${before} → ${afterH})`);
@@ -702,10 +748,14 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const afterSelect = (await quoteFilesOnDisk(slug)).length;
       if (afterSelect !== before) throw new Error(`MOBI selection alone created quote (${before} → ${afterSelect})`);
       await pressHighlightSaveKey();
-      await browser.waitUntil(
-        async () => (await quoteFilesOnDisk(slug)).length > before,
-        { timeout: 20_000, timeoutMsg: "MOBI quote .md after H" },
-      );
+      try {
+        await browser.waitUntil(
+          async () => (await quoteFilesOnDisk(slug)).length > before,
+          { timeout: 20_000, timeoutMsg: "MOBI quote .md after H" },
+        );
+      } catch {
+        await dumpEpubPointerFailure("s19-after-H-no-quote-md");
+      }
       const afterH = (await quoteFilesOnDisk(slug)).length;
       if (afterH !== before + 1) {
         throw new Error(`expected exactly one new MOBI quote .md after H (${before} → ${afterH})`);

@@ -17,6 +17,23 @@ export type SmokeTestApi = {
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;
+  epubSelectionDiagnostics: () => {
+    renderInfo: {
+      mode: "iframe" | "fallback" | "empty";
+      iframeTextLength: number;
+      fallbackTextLength: number;
+      visibleTextLength: number;
+      iframeElementInLightDom: boolean;
+    } | null;
+    mode: string;
+    route: string;
+    selection: {
+      selections: { source: string; length: number; preview: string }[];
+      mainSelectionLength: number;
+      mainSelectionPreview: string;
+    };
+    lastHighlightKeyAt: number | null;
+  };
   ensureInspectorOpen: () => void;
   verifyDialogPlugin: () => Promise<{ ok: boolean; detail: string }>;
   seedWikilinkBacklink: () => Promise<{ targetTitle: string; backlinkCount: number }>;

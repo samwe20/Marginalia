@@ -1049,6 +1049,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         container: epubRoot,
         getMode: () => state.mode,
         onSelectionPending: selectionHint,
+        onHighlightSaveKey: () => {
+          if (state.route !== "reader" || state.mode !== "highlight") return;
+          const saved = epub?.commitPendingHighlight();
+          if (!saved) toast("Nejdřív označte text v knize", "info");
+        },
         onHighlight: async ({ text, cfi, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, cfi, anchor);
           await refreshInspectorAfterQuoteSave(state.slug);
@@ -1187,6 +1192,21 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return epub.readerRenderInfo();
     },
     epubPointerSelectionRect: () => epub?.readerPointerSelectionRect() ?? null,
+    epubSelectionDiagnostics: () => {
+      const lastH = (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number })
+        .__MARGINALIA_LAST_HIGHLIGHT_H__;
+      return {
+        renderInfo: epub?.readerRenderInfo() ?? null,
+        mode: state.mode,
+        route: state.route,
+        selection: epub?.selectionDiagnostics() ?? {
+          selections: [],
+          mainSelectionLength: 0,
+          mainSelectionPreview: "",
+        },
+        lastHighlightKeyAt: lastH ?? null,
+      };
+    },
     getLibraryRoot: () => state.libraryRoot,
     getFolderPickerInvocationCount,
     resetFirstRunClientState: async () => {
@@ -1345,6 +1365,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       const t = ev.target as HTMLElement | null;
       if (t?.closest("input, textarea, [contenteditable='true']")) return;
       ev.preventDefault();
+      (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number }).__MARGINALIA_LAST_HIGHLIGHT_H__ =
+        Date.now();
       const saved = pdf?.commitPendingHighlight() || epub?.commitPendingHighlight();
       if (!saved) toast("Nejdřív označte text v knize", "info");
     }

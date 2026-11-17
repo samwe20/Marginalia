@@ -24,6 +24,8 @@ export interface EpubReaderOptions {
     anchor: ReturnType<typeof anchorFromEpubSelection>;
   }) => void;
   onSelectionPending?: () => void;
+  /** Called when user presses H inside foliate iframe (focus there). */
+  onHighlightSaveKey?: () => void;
 }
 
 type FoliateView = HTMLElement & {
@@ -47,6 +49,7 @@ export class EpubReader {
   private readyTimer: number | null = null;
   private docText = "";
   private fixturePlainText: string | null = null;
+  private keyHandlers: { doc: Document; fn: (ev: KeyboardEvent) => void }[] = [];
 
   constructor(private opts: EpubReaderOptions) {}
 
@@ -108,6 +111,57 @@ export class EpubReader {
         ),
       );
     }
+    this.wireHighlightKeyHandlers();
+  }
+
+  private wireHighlightKeyHandlers(): void {
+    this.unwireHighlightKeyHandlers();
+    const onHighlightSaveKey = this.opts.onHighlightSaveKey;
+    if (!onHighlightSaveKey) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (this.opts.getMode() !== "highlight") return;
+      if (ev.key.length !== 1 || ev.key.toLowerCase() !== "h") return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const t = ev.target as HTMLElement | null;
+      if (t?.closest("input, textarea, [contenteditable='true']")) return;
+      ev.preventDefault();
+      (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number }).__MARGINALIA_LAST_HIGHLIGHT_H__ =
+        Date.now();
+      onHighlightSaveKey();
+    };
+    for (const doc of this.contentDocuments()) {
+      doc.addEventListener("keydown", onKey);
+      this.keyHandlers.push({ doc, fn: onKey });
+    }
+  }
+
+  private unwireHighlightKeyHandlers(): void {
+    for (const { doc, fn } of this.keyHandlers) doc.removeEventListener("keydown", fn);
+    this.keyHandlers = [];
+  }
+
+  selectionDiagnostics(): {
+    selections: { source: string; length: number; preview: string }[];
+    mainSelectionLength: number;
+    mainSelectionPreview: string;
+  } {
+    const selections: { source: string; length: number; preview: string }[] = [];
+    for (const doc of this.contentDocuments()) {
+      const text = doc.getSelection()?.toString().trim() ?? "";
+      if (text) {
+        selections.push({
+          source: doc.title || "foliate-iframe",
+          length: text.length,
+          preview: text.slice(0, 160),
+        });
+      }
+    }
+    const main = window.getSelection()?.toString().trim() ?? "";
+    return {
+      selections,
+      mainSelectionLength: main.length,
+      mainSelectionPreview: main.slice(0, 160),
+    };
   }
 
   private collectPointerRoots(): HTMLElement[] {
@@ -635,6 +689,7 @@ export class EpubReader {
   destroy(): void {
     if (this.readyTimer) window.clearTimeout(this.readyTimer);
     this.readyTimer = null;
+    this.unwireHighlightKeyHandlers();
     this.highlights.forEach((h) => h.detach());
     this.highlights = [];
     this.view?.remove();

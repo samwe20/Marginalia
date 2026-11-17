@@ -22,3 +22,5 @@ Fallback zůstává jako záloha při opravdu prázdném rendereru (velký EPUB,
 - `epubReaderRenderInfo` + `data-epub-render-mode` na `#epub-root`: režim **`iframe` | `fallback` | `empty`**.
 - `epubPointerSelectionRect`: souřadnice v **iframe** nebo na **fallback** (co uživatel reálně vidí).
 - S07 / S15 / S19 zapisují `renderInfo` do `smoke-results.json`; S15 a S19 citace = skutečný pointer + klávesa **H** (ne smoke invoke na uložení).
+- Installed smoke: `foliate-view.shadow$('foliate-paginator').shadow$('iframe')` → `switchToFrame` → drag na `p` uvnitř; u fallback viewport rect. Při pádu: screenshot + `epubSelectionDiagnostics` (výběr v iframe, `lastHighlightKeyAt`).
+- Produkt: highlighter čte `ownerDocument` výběru; **H** poslouchá `window` i **keydown** ve foliate content dokumentech (`onHighlightSaveKey`).
