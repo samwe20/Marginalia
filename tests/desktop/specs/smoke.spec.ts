@@ -60,6 +60,18 @@ async function ensureInspectorOpen() {
   }
 }
 
+function clampTopViewport(
+  rect: { x: number; y: number; x2: number; y2: number },
+  inner: { width: number; height: number },
+): { x: number; y: number; x2: number; y2: number } {
+  const cap = (v: number, max: number) => Math.max(2, Math.min(Math.floor(v), Math.max(3, max) - 2));
+  const y = cap(rect.y, inner.height);
+  let x1 = cap(rect.x, inner.width);
+  let x2 = cap(rect.x2, inner.width);
+  if (x2 <= x1 + 3) x2 = Math.min(inner.width - 2, x1 + Math.max(8, Math.floor((inner.width - x1) * 0.6)));
+  return { x: x1, y, x2, y2: y };
+}
+
 async function pointerDragViewport(
   fromX: number,
   fromY: number,
@@ -196,53 +208,30 @@ async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
     block?.scrollIntoView({ block: "center", inline: "nearest" });
   });
   await browser.pause(250);
+  const block = (await $("p, span")) as WebdriverIO.Element;
+  await block.waitForExist({ timeout: 8_000 });
+  const preview = (await browser.execute(function () {
+    const p = document.querySelector("p, span");
+    return p?.textContent?.trim().slice(0, 80) ?? "";
+  })) as string;
   let last: Record<string, unknown> = {};
   for (let attempt = 0; attempt < 4; attempt++) {
-    const plan = (await browser.execute(function () {
-      const body = document.body;
-      if (!body) return null;
-      const br = body.getBoundingClientRect();
-      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-      let textNode: Text | null = null;
-      while (walker.nextNode()) {
-        const t = walker.currentNode as Text;
-        if (t.data.replace(/\s+/g, " ").trim().length >= 5) {
-          textNode = t;
-          break;
-        }
+    const size = await block.getSize();
+    const w = size.width;
+    const h = size.height;
+    if (w < 8 || h < 4) throw new Error(`foliate text block too small: ${w}x${h}`);
+    const y = Math.max(1, Math.floor(h / 2));
+    const x1 = 2;
+    const x2 = Math.min(w - 2, Math.max(x1 + 6, w - 2));
+    try {
+      await pointerDragOnElement(block, x1, y, x2, y);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("out of bounds") && attempt < 3) {
+        await browser.pause(250);
+        continue;
       }
-      if (!textNode) return null;
-      const range = document.createRange();
-      range.selectNodeContents(textNode);
-      const r = range.getClientRects()[0] ?? textNode.parentElement?.getBoundingClientRect();
-      if (!r || r.width < 4 || r.height < 2) return null;
-      const midY = Math.floor(r.top + r.height / 2);
-      return {
-        preview: textNode.data.trim().slice(0, 80),
-        viewport: {
-          x1: Math.floor(r.left + 2),
-          y1: midY,
-          x2: Math.floor(r.right - 2),
-          y2: midY,
-        },
-        bodyRel: {
-          x1: Math.floor(r.left - br.left + 2),
-          y1: Math.floor(r.top - br.top + r.height / 2),
-          x2: Math.floor(r.right - br.left - 2),
-          y2: Math.floor(r.top - br.top + r.height / 2),
-        },
-      };
-    })) as {
-      preview: string;
-      viewport: { x1: number; y1: number; x2: number; y2: number };
-      bodyRel: { x1: number; y1: number; x2: number; y2: number };
-    } | null;
-    if (!plan) throw new Error("no text node in foliate content frame");
-    const body = (await $("body")) as WebdriverIO.Element;
-    if (attempt % 2 === 0) {
-      await pointerDragOnElement(body, plan.bodyRel.x1, plan.bodyRel.y1, plan.bodyRel.x2, plan.bodyRel.y2);
-    } else {
-      await pointerDragViewport(plan.viewport.x1, plan.viewport.y1, plan.viewport.x2, plan.viewport.y2, 500);
+      throw e;
     }
     const inFrameSelection = (await browser.execute(function () {
       const t = window.getSelection()?.toString().trim() ?? "";
@@ -252,7 +241,7 @@ async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
       const highlighterPending = api?.epubSelectionDiagnostics?.()?.highlighterPending === true;
       return { length: t.length, preview: t.slice(0, 160), highlighterPending };
     })) as { length: number; preview: string; highlighterPending?: boolean };
-    last = { attempt, plan, inFrameSelection };
+    last = { attempt, preview, drag: { x1, y1: y, x2, y2: y, w, h }, inFrameSelection };
     if (inFrameSelection.length >= 3 || inFrameSelection.highlighterPending) {
       return last;
     }
@@ -296,7 +285,11 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
       "epubPointerSelectionRect",
     );
     if (rect) {
-      await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2, 500);
+      const inner = (await browser.execute(function () {
+        return { width: window.innerWidth, height: window.innerHeight };
+      })) as { width: number; height: number };
+      const clamped = clampTopViewport(rect, inner);
+      await pointerDragViewport(clamped.x, clamped.y, clamped.x2, clamped.y2, 500);
       const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
       const sel = diag.selection as { selections: { length: number }[] };
       const contentLen = sel.selections?.reduce((n, s) => n + (s.length ?? 0), 0) ?? 0;
