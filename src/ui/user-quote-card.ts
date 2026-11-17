@@ -1,7 +1,9 @@
 import type { QuoteDocument } from "../lib/quote-markdown";
-import type { BookBibliography } from "../lib/book-bibliography";
 import { looksLikeTechnicalSlug } from "../lib/filename-meta";
 import { escapeAttr, escapeHtml } from "../lib/html";
+
+/** Narrow type so this module works on branches without bibliography. */
+export type BookBibliography = { title?: string } | null;
 
 export function formatQuotePageLabel(page: string, opts?: { chapter?: string; percent?: number }): string {
   const p = page.trim();
@@ -38,7 +40,7 @@ export type UserQuoteCardOpts = {
   listAttrs?: Record<string, string>;
   bookAuthorFallback?: string;
   bookTitleFallback?: string;
-  bibliography?: BookBibliography | null;
+  bibliography?: BookBibliography;
   pageLabelOpts?: { chapter?: string; percent?: number };
 };
 
