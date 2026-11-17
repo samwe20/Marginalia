@@ -28,7 +28,7 @@ export async function createDocumentsMarginaliaFolder(deps: LibraryRootUiDeps): 
 export async function ensureLibrarySubdirs(libraryRoot: string): Promise<void> {
   if (!isTauri() || !libraryRoot) return;
   const { mkdir, exists } = await import("@tauri-apps/plugin-fs");
-  for (const sub of ["knihy", "citace", "poznamky"] as const) {
+  for (const sub of ["knihy", "citace", "poznamky", "knihy/_covers"] as const) {
     const p = `${libraryRoot.replace(/[/\\]+$/, "")}/${sub}`;
     if (!(await exists(p))) await mkdir(p, { recursive: true });
   }

@@ -1154,6 +1154,35 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
+  it("S25 library cover cache survives restart", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await goLibrary();
+      await browser.pause(800);
+      let covers = (await callSmokeApi<{ hasCachedImage: boolean; kind: string }[]>("libraryCoverDiagnostics")) ?? [];
+      if (!covers.length) throw new Error("no books in library");
+      const hasVisual = await browser.execute(function () {
+        const imgs = document.querySelectorAll(".book-card__cover-image");
+        const typos = document.querySelectorAll(".book-card .book-cover");
+        return imgs.length + typos.length >= 1;
+      });
+      if (!hasVisual) throw new Error("no cover or typographic card in grid");
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await openPdfFromLibraryCard();
+      await goLibrary();
+      await browser.pause(600);
+      const after = await browser.execute(function () {
+        return document.querySelectorAll(".book-card__cover-image, .book-card .book-cover").length;
+      });
+      if (after < 1) throw new Error("covers missing after restart");
+      record("S25", "Library cover cache", true, `rows=${covers.length}`);
+    } catch (e) {
+      record("S25", "Library cover cache", false, String(e));
+      throw e;
+    }
+  });
+
   it("S24 bibliography persists + copy citation", async () => {
     try {
       await openPdfFromLibraryCard();

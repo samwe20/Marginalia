@@ -53,6 +53,9 @@ export type SmokeTestApi = {
   getBibliographyField: (field: string) => string;
   getLastCitationCopy: () => string;
   triggerCopyCitation: (style: "informal" | "iso690" | "apa7") => Promise<string>;
+  libraryCoverDiagnostics: () => Promise<
+    { slug: string; kind: string; hasCachedImage: boolean; hasTypographicOnly: boolean }[]
+  >;
 };
 
 declare global {

@@ -29,6 +29,10 @@ export function renderReaderBibliographyFields(bib: BookBibliography): string {
     ${field("reader-bib-translator", "Překladatel", "translator", bib.translator)}
     ${field("reader-bib-editor", "Editor", "editor", bib.editor)}
     ${field("reader-bib-language", "Jazyk", "language", bib.language)}
+    <label class="reader-bib-field reader-bib-cover-field">
+      <span>Vlastní obálka</span>
+      <input type="file" class="reader-bib-cover-input" id="reader-bib-cover-file" accept="image/png,image/jpeg,image/webp" />
+    </label>
   </div>`;
 }
 

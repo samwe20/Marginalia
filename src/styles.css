@@ -542,6 +542,19 @@ body.setup-modal-open .workspace {
   font-size: 1.35rem;
   color: var(--accent);
   margin-bottom: 0.45rem;
+  overflow: hidden;
+}
+
+.book-card__cover--img {
+  padding: 0;
+  background: var(--panel);
+}
+
+.book-card__cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .book-cover {

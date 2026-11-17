@@ -26,6 +26,14 @@ import {
 } from "./lib/file-metadata";
 import { formatCitation, type CitationStyleId } from "./lib/citation-format";
 import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/reader-bibliography";
+import { renderBookCoverMarkup } from "./ui/book-cover";
+import { renderTypographicCoverHtml } from "./lib/typographic-cover";
+import {
+  ensureBookCoverCached,
+  enqueueCoverGeneration,
+  setCustomBookCover,
+  coverImageUrl,
+} from "./lib/book-cover-cache";
 import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
@@ -308,6 +316,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       el.addEventListener("change", () => void persistBibliography());
       el.addEventListener("blur", () => void persistBibliography());
     });
+    readerBibPanel.querySelector("#reader-bib-cover-file")?.addEventListener("change", () => {
+      const input = readerBibPanel.querySelector("#reader-bib-cover-file") as HTMLInputElement;
+      const file = input.files?.[0];
+      if (!file || !state.slug || !state.libraryRoot || !state.book) return;
+      void setCustomBookCover(state.libraryRoot, state.slug, state.book.sha256, file)
+        .then(() => toast("Vlastní obálka uložena", "success"))
+        .catch(() => toast("Obálku se nepodařilo uložit", "error"));
+      input.value = "";
+    });
     readerBibPanel.querySelector("#reader-bib-add-author")?.addEventListener("click", () => {
       if (!state.bibliography) return;
       state.bibliography = {
@@ -526,6 +543,35 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const renderLibrary = async () => {
     const recent = await listBooksForLibrary();
     const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
+    const userCards = recent.length
+      ? (
+          await Promise.all(
+            recent.map(async (b) => {
+              const cover = state.libraryRoot
+                ? await renderBookCoverMarkup({
+                    libraryRoot: state.libraryRoot,
+                    slug: b.slug,
+                    title: b.title,
+                    author: b.author,
+                  })
+                : renderTypographicCoverHtml({
+                    slug: b.slug,
+                    title: b.title,
+                    author: b.author,
+                  });
+              return `
+              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
+                data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
+                data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
+                title="${escapeAttr(b.title)}">
+                ${cover}
+                <div class="book-card__title">${escapeHtml(b.title)}</div>
+                <div class="book-card__meta">${escapeHtml(b.author || "—")} · ${b.kind.toUpperCase()}</div>
+              </button>`;
+            }),
+          )
+        ).join("")
+      : "";
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
@@ -547,19 +593,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           recent.length
             ? `<section class="library-section">
             <h2 class="section-title">Nedávno otevřené</h2>
-            <div class="book-grid">${recent
-              .map(
-                (b) => `
-              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
-                data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
-                data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
-                title="${escapeAttr(b.title)}">
-                <div class="book-card__cover book-card__cover--letter">${escapeHtml(b.title.slice(0, 1).toUpperCase())}</div>
-                <div class="book-card__title">${escapeHtml(b.title)}</div>
-                <div class="book-card__meta">${b.kind.toUpperCase()}</div>
-              </button>`,
-                )
-                .join("")}</div></section>`
+            <div class="book-grid">${userCards}</div></section>`
             : demoBooks.length
               ? ""
               : `<p class="muted">Ve složce knihovny zatím nejsou podporované knihy — přidejte PDF, EPUB nebo MOBI a zvolte Obnovit knihy.</p>`
@@ -583,6 +617,22 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       });
     });
     bindDemoNavigation();
+    if (state.libraryRoot && recent.length) {
+      void enqueueCoverGeneration(
+        state.libraryRoot,
+        recent.map((b) => ({
+          slug: b.slug,
+          kind: b.kind,
+          sha256: b.sha256,
+          title: b.title,
+          author: b.author,
+          filePath: b.filePath,
+        })),
+        () => {
+          if (state.route === "library") void renderLibrary();
+        },
+      );
+    }
   };
 
   const renderQuotesOverview = async () => {
@@ -1077,6 +1127,16 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       state.bibliography = migrateBibliographyFromCard(state.book.title, state.book.author, null);
     }
     await ensureBookCard(state.libraryRoot, state.book);
+    const kindForCover = fileKind ?? "pdf";
+    void ensureBookCoverCached({
+      libraryRoot: state.libraryRoot,
+      slug: state.slug,
+      kind: kindForCover,
+      sha256: state.book.sha256,
+      title: state.book.title,
+      author: state.book.author,
+      filePath: state.book.filePath,
+    });
     await refreshInspectorAfterQuoteSave(state.slug);
     const now = new Date().toISOString();
     const selectionHint = () => toast("Označení připraveno — stiskněte H pro uložení citace", "info");
@@ -1394,6 +1454,21 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     getLastCitationCopy: () =>
       (window as unknown as { __MARGINALIA_LAST_CITATION__?: string }).__MARGINALIA_LAST_CITATION__ ?? "",
+    libraryCoverDiagnostics: async () => {
+      const books = await listBooksForLibrary();
+      const out: { slug: string; kind: string; hasCachedImage: boolean; hasTypographicOnly: boolean }[] = [];
+      for (const b of books) {
+        const src = state.libraryRoot ? await coverImageUrl(state.libraryRoot, b.slug) : null;
+        const hasImg = Boolean(src);
+        out.push({
+          slug: b.slug,
+          kind: b.kind,
+          hasCachedImage: hasImg,
+          hasTypographicOnly: !hasImg,
+        });
+      }
+      return out;
+    },
     triggerCopyCitation: async (style: CitationStyleId) => {
       const btn = inspectorBody.querySelector(`[data-copy-citation="${style}"]`) as HTMLButtonElement | null;
       if (!btn) throw new Error(`No citation button for ${style}`);
