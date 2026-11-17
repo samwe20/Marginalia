@@ -61,6 +61,11 @@ Var MarginaliaUninstallExitCode
   ; left locked during the recursive cleanup.
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
+  ; Tauri's Install section called SetOutPath "$INSTDIR" immediately before
+  ; this hook. Windows cannot remove a process's current working directory, so
+  ; leave it before recursively deleting the old/target install root.
+  SetOutPath "$TEMP"
+
   ; Prefer the configured target, then the previous Tauri install location.
   ; SHCTX is HKCU for currentUser; explicit HKCU/HKLM fallbacks also cover an
   ; install made with an older mode.
