@@ -10,7 +10,9 @@ if ($installerPath -and (Test-Path $installerPath)) {
 }
 if (-not $installer) { throw "Set INSTALLER_PATH or place *-setup.exe in repo root" }
 
-$bundleId = "com.marginalia.reader"
+$tauriConfig = Get-Content (Join-Path $repoRoot "src-tauri\tauri.conf.json") -Raw | ConvertFrom-Json
+$bundleId = $tauriConfig.identifier
+$productName = $tauriConfig.productName
 $installDir = Join-Path $env:LOCALAPPDATA "MarginaliaSmoke"
 $roamingAppData = Join-Path $env:APPDATA $bundleId
 $localAppData = Join-Path $env:LOCALAPPDATA $bundleId
@@ -18,6 +20,15 @@ $libraryRoot = Join-Path $env:LOCALAPPDATA "MarginaliaSmokeLibrary"
 $libraryMarker = Join-Path $libraryRoot "library-never-delete.marker"
 $resultsDir = Join-Path $repoRoot "test-results\desktop-smoke"
 $safetyRegistry = "HKCU:\Software\$bundleId"
+$uninstallRegistry = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$productName"
+
+function Invoke-MarginaliaInstaller {
+  param([string]$Label)
+  $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installDir" -Wait -PassThru
+  if ($process.ExitCode -ne 0) {
+    throw "$Label installer exited with $($process.ExitCode)"
+  }
+}
 
 foreach ($path in @($installDir, $roamingAppData, $localAppData, $libraryRoot, $resultsDir)) {
   if (Test-Path $path) { Remove-Item -Recurse -Force $path }
@@ -33,7 +44,17 @@ Copy-Item (Join-Path $repoRoot "tests/fixtures/sample.mobi") $libraryRoot
 Set-Content -LiteralPath $libraryMarker -Value "NEVER DELETE USER LIBRARY" -NoNewline
 
 Write-Host "Seed previous installation at $installDir"
-Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installDir" -Wait
+Invoke-MarginaliaInstaller "Initial"
+if (-not (Test-Path $uninstallRegistry)) {
+  throw "Per-user uninstall registry key missing after initial install: $uninstallRegistry"
+}
+$registeredInstallDir = [string](Get-ItemProperty -Path $uninstallRegistry -Name "InstallLocation").InstallLocation
+if ($registeredInstallDir.Trim('"') -ne $installDir) {
+  throw "Per-user uninstall key points to '$registeredInstallDir', expected '$installDir'"
+}
+if (Get-Process -Name $productName -ErrorAction SilentlyContinue) {
+  throw "Silent installer unexpectedly left Marginalia running and locking the installation"
+}
 $oldInstallMarker = Join-Path $installDir "old-install.marker"
 Set-Content -LiteralPath $oldInstallMarker -Value "must disappear through silent uninstall" -NoNewline
 
@@ -50,7 +71,7 @@ New-Item -Path $safetyRegistry -Force | Out-Null
 Set-ItemProperty -Path $safetyRegistry -Name "LibraryRoot" -Value $libraryRoot
 
 Write-Host "Clean reinstall: previous app must uninstall; AppData must reset; library must survive"
-Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installDir" -Wait
+Invoke-MarginaliaInstaller "Clean reinstall"
 
 $cleanProof = [ordered]@{
   previousInstallMarkerRemoved = -not (Test-Path $oldInstallMarker)
@@ -61,6 +82,7 @@ $cleanProof = [ordered]@{
   libraryEpubPreserved = Test-Path (Join-Path $libraryRoot "sample.epub")
   libraryMobiPreserved = Test-Path (Join-Path $libraryRoot "sample.mobi")
   safetyRegistryRemoved = -not (Test-Path $safetyRegistry)
+  perUserUninstallKeyRecreated = Test-Path $uninstallRegistry
 }
 $cleanProofPath = Join-Path $resultsDir "clean-install-proof.json"
 $cleanProof | ConvertTo-Json | Set-Content -LiteralPath $cleanProofPath -Encoding UTF8
