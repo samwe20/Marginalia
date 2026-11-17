@@ -1,5 +1,7 @@
 /** Pointer-driven text highlighting (pen and mouse). */
 
+import { selectionTextFromRange, snapOffsetsToWordBounds } from "./selection-text";
+
 export type HighlightMode = "off" | "highlight";
 
 export interface PointerStroke {
@@ -187,6 +189,9 @@ export function rangeToOffsets(
     start = at;
     end = at + text.length;
   }
-  const text = (root.textContent ?? "").slice(start, end);
-  return { start, end, text };
+  const full = root.textContent ?? "";
+  const snapped = snapOffsetsToWordBounds(full, Math.max(0, start), Math.max(0, end));
+  const fromRange = selectionTextFromRange(range, root);
+  const text = fromRange.trim() ? fromRange : full.slice(snapped.start, snapped.end);
+  return { start: snapped.start, end: snapped.end, text };
 }

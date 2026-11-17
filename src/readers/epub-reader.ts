@@ -19,6 +19,7 @@ import {
 } from "../lib/highlighter";
 import { isTauri } from "../lib/runtime";
 import { loadReaderFlow, type FoliateFlow } from "../lib/reader-flow";
+import { appThemeIsDark, foliateThemeCss } from "../lib/foliate-theme";
 
 export interface EpubReaderOptions {
   container: HTMLElement;
@@ -56,6 +57,17 @@ type FoliateView = HTMLElement & {
     }[];
     next?: () => Promise<void>;
     prev?: () => Promise<void>;
+    setStyles?: (css: string) => void;
+    setAttribute: (name: string, value: string) => void;
+    getAttribute: (name: string) => string | null;
+    addEventListener: HTMLElement["addEventListener"];
+    dataset: DOMStringMap;
+    style: CSSStyleDeclaration;
+    atEnd?: boolean;
+    atStart?: boolean;
+    start?: number;
+    end?: number;
+    viewSize?: number;
   };
 };
 
@@ -70,6 +82,7 @@ const HIGHLIGHT_COLOR = "#f0c84b";
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
+  private packageMetadata: unknown = null;
   private highlights: HighlightHandle[] = [];
   private readyTimer: number | null = null;
   private docText = "";
@@ -393,6 +406,7 @@ export class EpubReader {
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
+    this.packageMetadata = (book as { metadata?: unknown }).metadata ?? null;
     await this.captureFixturePlainText(
       book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
     );
@@ -423,11 +437,16 @@ export class EpubReader {
       view.renderer?.setAttribute("max-column-count", "1");
       view.renderer?.setAttribute("max-inline-size", "720px");
     }
+    this.applyFoliateTheme(view);
     view.renderer?.addEventListener("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
       this.wireHighlighter();
+      this.applyFoliateTheme(view);
+      this.ensureScrolledSectionAdvance(view);
+      // Soft chapter divider cue on section change in scrolled mode.
+      if (this.flow === "scrolled") this.markSectionDivider(view);
     });
     view.addEventListener("relocate", (e) => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
@@ -438,8 +457,20 @@ export class EpubReader {
     });
     await this.goToStart(view);
     await this.waitForReadableContent(isMobi);
+    this.applyFoliateTheme(view);
+    // MOBI sometimes paints only a title until a second layout pass.
+    if (isMobi && this.iframeViewportVisibleTextLength() < 40) {
+      try {
+        await view.renderer?.next?.();
+        await view.renderer?.prev?.();
+      } catch { /* */
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      this.applyFoliateTheme(view);
+    }
     this.mountPlainTextFallbackIfNeeded();
     this.wireHighlighter();
+    this.ensureScrolledSectionAdvance(view);
 
     view.addEventListener("relayout", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
@@ -661,6 +692,33 @@ export class EpubReader {
     }
   }
 
+  /** CI smoke: select text in foliate iframe when WebDriver pointer actions fail (WebView2). */
+  prepareSmokeTextSelection(): boolean {
+    if (this.opts.getMode() !== "highlight") return false;
+    const hit = this.firstSelectableText();
+    if (!hit) return false;
+    const { node, root } = hit;
+    const doc = node.ownerDocument;
+    if (!doc) return false;
+    const raw = node.textContent ?? "";
+    const span = Math.min(raw.length, Math.max(8, Math.min(48, raw.length)));
+    if (span < 3) return false;
+    const range = doc.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, span);
+    const sel = doc.getSelection();
+    if (!sel) return false;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if (root instanceof HTMLElement) {
+      root.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0, view: doc.defaultView ?? window }),
+      );
+    }
+    const selected = sel.toString().trim();
+    return selected.length >= 3 || this.hasPendingHighlight();
+  }
+
   quoteDraftFromFirstText(): {
     text: string;
     cfi: string;
@@ -758,6 +816,104 @@ export class EpubReader {
     return null;
   }
 
+
+  contentThemeProbe(): { color: string; background: string } {
+    const contents = this.view?.renderer?.getContents?.() ?? [];
+    for (const { doc } of contents) {
+      const body = doc?.body;
+      if (!body || !doc.defaultView) continue;
+      const cs = doc.defaultView.getComputedStyle(body);
+      return { color: cs.color, background: cs.backgroundColor };
+    }
+    const host = this.view?.renderer;
+    if (host) {
+      const cs = getComputedStyle(host);
+      return { color: cs.color, background: cs.backgroundColor };
+    }
+    return { color: "", background: "" };
+  }
+
+  refreshTheme(): void {
+    if (this.view) this.applyFoliateTheme(this.view);
+  }
+
+  applyFoliateTheme(view: FoliateView = this.view as FoliateView): void {
+    if (!view) return;
+    const dark = appThemeIsDark();
+    const css = foliateThemeCss(dark ? "dark" : "light");
+    try {
+      view.renderer?.setStyles?.(css);
+    } catch {
+      /* older foliate */
+    }
+    if (view.renderer) {
+      view.renderer.style.background = dark ? "#000" : "var(--paper, #f7f4ea)";
+      view.renderer.style.color = dark ? "#e8e8e8" : "var(--ink, #2c2a26)";
+    }
+  }
+
+  private ensureScrolledSectionAdvance(view: FoliateView): void {
+    if (this.flow !== "scrolled") return;
+    const renderer = view.renderer;
+    if (!renderer || renderer.dataset.scrollAdvanceBound === "1") return;
+    renderer.dataset.scrollAdvanceBound = "1";
+    let cooling = false;
+    const tryAdvance = async (dir: 1 | -1) => {
+      if (cooling) return;
+      cooling = true;
+      try {
+        if (dir > 0) await view.next?.();
+        else await view.prev?.();
+      } finally {
+        window.setTimeout(() => {
+          cooling = false;
+        }, 320);
+      }
+    };
+    renderer.addEventListener(
+      "wheel",
+      (ev) => {
+        if (this.flow !== "scrolled") return;
+        const el = renderer;
+        const nearEnd =
+          Boolean(el.atEnd) ||
+          (typeof el.viewSize === "number" && typeof el.end === "number" && el.viewSize - el.end < 4);
+        const nearStart = Boolean(el.atStart) || (typeof el.start === "number" && el.start < 4);
+        if (ev.deltaY > 8 && nearEnd) {
+          ev.preventDefault();
+          void tryAdvance(1);
+        } else if (ev.deltaY < -8 && nearStart) {
+          ev.preventDefault();
+          void tryAdvance(-1);
+        }
+      },
+      { passive: false },
+    );
+  }
+
+  private markSectionDivider(_view: FoliateView): void {
+    const host = this.opts.container;
+    host.classList.add("epub-root--section-break");
+    window.setTimeout(() => host.classList.remove("epub-root--section-break"), 450);
+  }
+
+  chapterTitleForCurrentSection(): string | null {
+    const contents = this.view?.renderer?.getContents?.() ?? [];
+    for (const { doc } of contents) {
+      const h = doc?.querySelector?.("h1, h2, h3, .title");
+      const title = h?.textContent?.replace(/\s+/g, " ").trim();
+      if (title && title.length > 1 && title.length < 120) return title;
+    }
+    return null;
+  }
+
+  sectionProgress(): { index: number | null; count: number; percent: number | null } {
+    const index = this.currentSectionIndex();
+    const count = this.view?.book?.sections?.length ?? 0;
+    const percent = index != null && count > 0 ? ((index + 0.5) / count) * 100 : null;
+    return { index, count, percent };
+  }
+
   paintHighlight(range: Range): void {
     const entry = this.contentEntryForRange(range);
     if (entry && this.view?.addAnnotation) {
@@ -846,6 +1002,10 @@ export class EpubReader {
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
     return range;
+  }
+
+  getPackageMetadata(): unknown {
+    return this.packageMetadata;
   }
 
   destroy(): void {
