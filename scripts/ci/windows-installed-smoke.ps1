@@ -84,7 +84,8 @@ $env:MARGINALIA_FIXTURE_EPUB = Join-Path $libraryRoot "sample.epub"
 $env:MARGINALIA_FIXTURE_MOBI = Join-Path $libraryRoot "sample.mobi"
 # Multi-section real-world MOBI (Project Gutenberg #1524); staged into the library by S25, reused by S26.
 $env:MARGINALIA_FIXTURE_MOBI_MULTI = Join-Path $repoRoot "tests/fixtures/hamlet-pg1524.mobi"
-$env:MARGINALIA_FIXTURE_PDF_EXTRA = Join-Path $repoRoot "tests/fixtures/sample.pdf"
+# Must differ in content hash from sample.pdf — identity is sha-stable (S13).
+$env:MARGINALIA_FIXTURE_PDF_EXTRA = Join-Path $repoRoot "tests/fixtures/sample-extra.pdf"
 $env:MARGINALIA_FIXTURE_VERSE_PDF = Join-Path $repoRoot "tests/fixtures/verse-indent.pdf"
 $env:SMOKE_ARTIFACTS_DIR = $resultsDir
 

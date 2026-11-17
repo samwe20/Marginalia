@@ -1,8 +1,12 @@
 import { bookScanNamePattern } from "./book-formats";
 import { isTauri } from "./runtime";
 
-/** App metadata dirs — not scanned for source book files. */
-const SKIP_DIR_NAMES = new Set(["citace", "poznamky"]);
+/**
+ * App-managed dirs — not scanned as import sources.
+ * `knihy/` holds book cards + persisted binaries; re-scanning those copies
+ * would collide with sha-stable identity (same file, second path).
+ */
+const SKIP_DIR_NAMES = new Set(["citace", "poznamky", "knihy"]);
 
 function pathSep(root: string): string {
   return root.includes("\\") ? "\\" : "/";

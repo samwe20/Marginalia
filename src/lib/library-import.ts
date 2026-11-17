@@ -3,8 +3,11 @@ import { findBookFilesOnDisk, isPathInsideLibrary } from "./library-scan";
 import { ensureBookCard, type BookMeta } from "./storage";
 import {
   findBookCardBySha256,
+  listBookCardsWithSlugs,
+  loadBookCard,
   persistBookFile,
   type LibraryBookEntry,
+  type ParsedBookCard,
 } from "./book-library";
 import { isTauri } from "./runtime";
 import { looksLikeTechnicalSlug, parseFilenameMeta } from "./filename-meta";
@@ -20,6 +23,8 @@ function bookKind(fileName: string): "pdf" | "epub" | "mobi" {
   return detectBookFileKind(fileName) ?? "pdf";
 }
 
+type ShaIndex = Map<string, string>; // sha256 → slug
+
 /**
  * Register one on-disk book (no reader open).
  * Identity is content hash — never create a second card when title/metadata differ.
@@ -28,6 +33,7 @@ export async function registerBookFromDiskPath(
   libraryRoot: string,
   filePath: string,
   pushRecent: ImportRecentPush,
+  shaIndex?: ShaIndex,
 ): Promise<string | null> {
   if (!isTauri()) return null;
   let buffer: ArrayBuffer;
@@ -53,15 +59,27 @@ export async function registerBookFromDiskPath(
   const title = parsed.title;
   const authorFromName = parsed.author;
   const kind = bookKind(name);
+  const shaKey = sha.toLowerCase();
 
-  const existingRec = await findBookCardBySha256(libraryRoot, sha);
-  if (existingRec) {
-    const existing = existingRec.card;
-    let nextTitle = existing.title || title;
-    let nextAuthor = existing.author || authorFromName;
+  let existingSlug = shaIndex?.get(shaKey) ?? "";
+  let existingCard: ParsedBookCard | null = existingSlug
+    ? await loadBookCard(libraryRoot, existingSlug)
+    : null;
+  if (!existingCard) {
+    const bySha = await findBookCardBySha256(libraryRoot, sha);
+    if (bySha) {
+      existingSlug = bySha.slug;
+      existingCard = bySha.card;
+      shaIndex?.set(shaKey, existingSlug);
+    }
+  }
+
+  if (existingCard && existingSlug) {
+    let nextTitle = existingCard.title || title;
+    let nextAuthor = existingCard.author || authorFromName;
     if (looksLikeTechnicalSlug(nextTitle) && title) nextTitle = title;
     if (!nextAuthor && authorFromName) nextAuthor = authorFromName;
-    const path = existing.path || filePath;
+    const path = existingCard.path || filePath;
     const slug = await ensureBookCard(
       libraryRoot,
       {
@@ -70,8 +88,9 @@ export async function registerBookFromDiskPath(
         sha256: sha,
         filePath: path,
       },
-      { slug: existingRec.slug },
+      { slug: existingSlug },
     );
+    shaIndex?.set(shaKey, slug);
     pushRecent({
       slug,
       kind,
@@ -95,6 +114,7 @@ export async function registerBookFromDiskPath(
     sha256: sha,
     filePath: storedPath,
   } satisfies BookMeta);
+  shaIndex?.set(shaKey, slug);
 
   pushRecent({
     slug,
@@ -108,19 +128,39 @@ export async function registerBookFromDiskPath(
   return slug;
 }
 
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
 export async function syncAllBooksFromLibraryFolder(
   libraryRoot: string,
   pushRecent: ImportRecentPush,
 ): Promise<number> {
   const paths = await findBookFilesOnDisk(libraryRoot);
+  // One disk pass for existing cards — avoids O(n²) re-reads during large scans.
+  const shaIndex: ShaIndex = new Map();
+  for (const { slug, card } of await listBookCardsWithSlugs(libraryRoot)) {
+    const sha = card.sha256.trim().toLowerCase();
+    if (sha.length >= 8) shaIndex.set(sha, slug);
+  }
+
   let count = 0;
-  for (const p of paths) {
+  for (let i = 0; i < paths.length; i++) {
+    const p = paths[i]!;
     try {
-      const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent);
+      const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent, shaIndex);
       if (slug) count += 1;
     } catch {
       /* one corrupt file must not abort the whole scan */
     }
+    // Keep the UI thread responsive on large libraries (stress ~1000 books).
+    if (i % 8 === 7) await yieldToUi();
   }
   return count;
 }

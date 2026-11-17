@@ -27,7 +27,13 @@ Branch: `cursor/integration-all-d744` · base: `develop` · **do not merge**
 - `e3b4808` — temporary softened S27 wait (superseded)
 - `631fe7c` — sync notes loading shell + destroy readers on leave + restore strict S27
 
+## CI `5a3bd6a` (run 44198505003)
+
+- **Smoke:** 43 passing, **1 failing = S13** (S27 + S39–S43 all green).
+  - Cause: `MARGINALIA_FIXTURE_PDF_EXTRA` pointed at the same `sample.pdf` → identical sha → sha-stable identity correctly refused a 4th card (`3→3, imported=4`).
+  - Fix: distinct `tests/fixtures/sample-extra.pdf` + skip scanning managed `knihy/` copies.
+- **Stress:** script timeout ~30s mid-scan (~32/1000). Fix: 20min script timeout, yield during sync, O(n) sha index (was O(n²) card re-reads).
+
 ## Next
 
-1. Wait for green `windows-installed-smoke` on `631fe7c` (S27 + S39–S43) → exe.
-2. Collect `windows-installed-stress` metrics table into this file.
+1. Push S13 + stress fixes; wait for green smoke → exe + stress metrics table.

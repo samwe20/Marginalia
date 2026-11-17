@@ -58,7 +58,7 @@ exports.config = {
   ],
   logLevel: "warn",
   waitforTimeout: 30_000,
-  connectionRetryTimeout: 90_000,
+  connectionRetryTimeout: 180_000,
   connectionRetryCount: 3,
   framework: "mocha",
   reporters: ["spec"],
@@ -89,10 +89,22 @@ exports.config = {
       timer.unref?.();
       globalThis.__MARGINALIA_STRESS_SUITE_TIMER__ = timer;
     }
+    // finishLibrarySetup / rescan of ~1000 books runs inside browser.execute.
+    // Default script timeout (~30s) aborts mid-scan (CI saw ~32/1000 books).
+    try {
+      await browser.setTimeout({ script: 20 * 60 * 1000 });
+    } catch {
+      /* older drivers may ignore */
+    }
     await disarmMissingWdioPluginBridge(browser);
   },
   beforeTest: async () => {
     const browser = globalThis.browser;
+    try {
+      await browser.setTimeout({ script: 20 * 60 * 1000 });
+    } catch {
+      /* ignore */
+    }
     await disarmMissingWdioPluginBridge(browser);
   },
   after: async () => {
