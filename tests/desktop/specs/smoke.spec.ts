@@ -6,7 +6,9 @@ const library = process.env.MARGINALIA_SMOKE_LIBRARY!;
 const pdfPath = process.env.MARGINALIA_FIXTURE_PDF!;
 const epubPath = process.env.MARGINALIA_FIXTURE_EPUB!;
 const mobiPath = process.env.MARGINALIA_FIXTURE_MOBI ?? "";
+const mobiMultiSource = process.env.MARGINALIA_FIXTURE_MOBI_MULTI ?? "";
 const pdfExtraSource = process.env.MARGINALIA_FIXTURE_PDF_EXTRA!;
+const cleanInstallProof = process.env.MARGINALIA_CLEAN_INSTALL_PROOF ?? "";
 const artifactDir =
   process.env.SMOKE_ARTIFACTS_DIR ?? path.join(process.cwd(), "test-results", "desktop-smoke");
 
@@ -448,6 +450,65 @@ async function saveScreenshot(name: string) {
   await browser.saveScreenshot(target);
 }
 
+/**
+ * Restart the installed app under tauri-driver without tripping the WDIO Tauri
+ * service's missing-plugin focus loop (window.wdioTauri is never injected for
+ * driverProvider: "external").
+ */
+async function disarmMissingWdioPluginBridge() {
+  // String script only: ts-node can inject a browser-unsafe `__name()` helper into function bodies.
+  await browser.execute(`
+    if (window.wdioTauri && typeof window.wdioTauri.execute === "function") return false;
+    window.wdioTauri = {
+      execute: function () { return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed")); },
+      waitForInit: function () { return Promise.resolve(); }
+    };
+    return true;
+  `);
+  try {
+    const handles = await browser.getWindowHandles();
+    if (handles.length) await browser.switchToWindow(handles[0]);
+  } catch {
+    /* best-effort focus suppress */
+  }
+}
+
+async function reloadAppSession() {
+  await browser.reloadSession();
+  await browser.pause(2_500);
+  // Must run before any $/click: otherwise each command burns ~5s probing for wdioTauri.
+  await disarmMissingWdioPluginBridge();
+  await browser.waitUntil(
+    async () => {
+      try {
+        return await browser.execute(function () {
+          return Boolean(document.querySelector(".sidebar"));
+        });
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 45_000, interval: 500, timeoutMsg: "app shell missing after reloadSession" },
+  );
+}
+
+/** Foliate paints EPUB/MOBI highlights as SVG overlays, not light-DOM <mark> nodes. */
+async function waitReaderHighlightPainted(label: string, minCount = 1): Promise<number> {
+  let count = 0;
+  await browser.waitUntil(
+    async () => {
+      count = (await callSmokeApi<number>("readerHighlightPaintCount")) ?? 0;
+      return count >= minCount;
+    },
+    {
+      timeout: 30_000,
+      interval: 300,
+      timeoutMsg: `${label}: expected ≥${minCount} painted highlight(s), got ${count}`,
+    },
+  );
+  return count;
+}
+
 async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
   return browser.execute(
     function callMarginaliaSmokeApi(payload) {
@@ -489,6 +550,23 @@ async function waitEpubTextReady(timeoutMs = 120_000) {
     },
     { timeout: timeoutMs, interval: 800, timeoutMsg: "EPUB visible text not rendered" },
   );
+}
+
+/** Characters whose rendered boxes intersect the window — what the user actually sees. */
+async function waitViewportVisibleText(minChars: number, timeoutMs: number): Promise<number> {
+  let last = 0;
+  await browser.waitUntil(
+    async () => {
+      last = (await callSmokeApi<number>("epubViewportVisibleTextLength")) ?? 0;
+      return last > minChars;
+    },
+    {
+      timeout: timeoutMs,
+      interval: 500,
+      timeoutMsg: `reader text not visible in viewport (visible chars=${last}, need >${minChars})`,
+    },
+  );
+  return last;
 }
 
 async function goLibrary() {
@@ -539,6 +617,23 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     const table = results.map((r) => `${r.ok ? "PASS" : "FAIL"}\t${r.id}\t${r.name}\t${r.detail ?? ""}`).join("\n");
     fs.writeFileSync(path.join(artifactDir, "smoke-results.json"), JSON.stringify(results, null, 2));
     fs.writeFileSync(path.join(artifactDir, "smoke-results.txt"), table);
+  });
+
+  it("S00 clean install smaže jen AppData a zachová knihovnu", () => {
+    try {
+      if (!cleanInstallProof || !fs.existsSync(cleanInstallProof)) {
+        throw new Error(`clean-install proof missing: ${cleanInstallProof || "(unset)"}`);
+      }
+      const proof = JSON.parse(fs.readFileSync(cleanInstallProof, "utf8")) as Record<string, boolean>;
+      const failed = Object.entries(proof)
+        .filter(([, ok]) => ok !== true)
+        .map(([name]) => name);
+      if (failed.length) throw new Error(`failed checks: ${failed.join(", ")}`);
+      record("S00", "Clean install: AppData pryč, knihovna zachována", true, JSON.stringify(proof));
+    } catch (e) {
+      record("S00", "Clean install: AppData pryč, knihovna zachována", false, String(e));
+      throw e;
+    }
   });
 
   it("S01 library shell", async () => {
@@ -678,6 +773,19 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
+  it("S24 EPUB: text je vidět ve viewportu (bounding rect)", async () => {
+    try {
+      await ensureEpubReaderOpen();
+      const visible = await waitViewportVisibleText(3, 30_000);
+      const renderInfo = await callSmokeApi<Record<string, unknown>>("epubReaderRenderInfo");
+      await saveScreenshot("smoke-epub-viewport-visible.png");
+      record("S24", "EPUB viditelný text ve viewportu", true, JSON.stringify({ visible, renderInfo }));
+    } catch (e) {
+      record("S24", "EPUB viditelný text ve viewportu", false, String(e));
+      throw e;
+    }
+  });
+
   it("S15 EPUB: výběr bez H neukládá; H uloží citaci", async function () {
     try {
       await ensureEpubReaderOpen();
@@ -718,7 +826,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const quoteId = files.find((f) => f.endsWith(".md"))?.replace(/\.md$/, "") ?? "";
       if (!quoteId) throw new Error("EPUB quote id missing");
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      const painted = await waitReaderHighlightPainted("S15 EPUB after H");
+      await saveScreenshot("smoke-s15-epub-highlight.png");
       await pointerSelectEpubText();
       await browser.pause(400);
       await clickReaderChromeAwayFromText();
@@ -732,6 +841,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const s15Detail = JSON.stringify({
         renderInfo,
         pointer,
+        painted,
         quoteMdBefore: before,
         quoteMdAfterSelection: afterSelect,
         quoteMdAfterH: afterH,
@@ -858,8 +968,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await openPdfFromLibraryCard();
       await $("#btn-back-library").click();
       await browser.pause(800);
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       const rootAfter = await callSmokeApi<string>("getLibraryRoot");
       if (rootAfter !== library) throw new Error(`library root after restart: ${rootAfter}`);
       await goLibrary();
@@ -980,12 +1089,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (afterH !== before + 1) {
         throw new Error(`expected exactly one new MOBI quote .md after H (${before} → ${afterH})`);
       }
-      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      const painted = await waitReaderHighlightPainted("S19 MOBI after H");
+      await saveScreenshot("smoke-s19-mobi-highlight.png");
       record(
         "S19",
         "MOBI reader visible text + citace po H",
         true,
-        JSON.stringify({ renderInfo, pointer, quoteMdBefore: before, quoteMdAfterH: afterH }),
+        JSON.stringify({ renderInfo, pointer, painted, quoteMdBefore: before, quoteMdAfterH: afterH }),
       );
     } catch (e) {
       record("S19", "MOBI reader visible text + citace po H", false, String(e));
@@ -1078,8 +1188,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(800);
       let md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
       if (!md.includes(note)) throw new Error("note not in .md before restart");
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       await openPdfFromLibraryCard();
       await ensureInspectorOpen();
       md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
@@ -1262,4 +1371,360 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   });
+
+  it("S25 vícesekční MOBI (Hamlet): začátek knihy, viditelný text, obnovení pozice", async () => {
+    try {
+      if (!mobiMultiSource) throw new Error("MARGINALIA_FIXTURE_MOBI_MULTI not set");
+      const destFileName = "hamlet-pg1524.mobi";
+      await invoke("smoke_stage_file_in_library", {
+        libraryRoot: library,
+        destFileName,
+        sourcePath: mobiMultiSource,
+      });
+      await callSmokeApi("openBookAtPath", path.join(library, destFileName), library);
+      await waitEpubTextReady(120_000);
+      const visible = await waitViewportVisibleText(100, 60_000);
+      const startSection = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      if (startSection == null || startSection > 1) {
+        throw new Error(`Hamlet must open at the start of the book, got section ${startSection}`);
+      }
+      await saveScreenshot("smoke-mobi-hamlet-visible.png");
+
+      await callSmokeApi<number | null>("epubNextSection");
+      const movedTo = await callSmokeApi<number | null>("epubNextSection");
+      if (movedTo == null || movedTo <= startSection) {
+        throw new Error(`section navigation did not move (${startSection} → ${movedTo})`);
+      }
+      await waitViewportVisibleText(3, 30_000);
+      await browser.pause(800);
+
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library after open");
+      await waitEpubTextReady(120_000);
+      const reopenedVisible = await waitViewportVisibleText(3, 60_000);
+      const reopenedSection = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      if (reopenedSection !== movedTo) {
+        throw new Error(`reopen did not restore position: expected section ${movedTo}, got ${reopenedSection}`);
+      }
+      await saveScreenshot("smoke-mobi-hamlet-reopened.png");
+      record(
+        "S25",
+        "Vícesekční MOBI: start, viewport, obnovení pozice",
+        true,
+        JSON.stringify({ visible, startSection, movedTo, reopenedSection, reopenedVisible }),
+      );
+    } catch (e) {
+      record("S25", "Vícesekční MOBI: start, viewport, obnovení pozice", false, String(e));
+      throw e;
+    }
+  }).timeout(420_000);
+
+  it("S26 režim čtení Posouvání × Stránkování: Hamlet MOBI i EPUB v obou, volba přežije restart", async () => {
+    type Flow = "scrolled" | "paginated";
+    type Info = { mode: string; flow: Flow; viewportVisibleTextLength: number; textWidthRatio: number; sectionIndex: number | null };
+    const results: Record<string, unknown> = {};
+
+    const chooseFlow = async (flow: Flow) => {
+      await $('[data-route="settings"]').click();
+      await $(`[data-reader-flow="${flow}"]`).click();
+      await browser.waitUntil(
+        async () => ((await $(`[data-reader-flow="${flow}"]`).getAttribute("class")) ?? "").includes("theme-picker__btn--on"),
+        { timeout: 10_000, timeoutMsg: `reading mode ${flow} not selected in Settings` },
+      );
+    };
+    const openHamlet = async () => {
+      await goLibrary();
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await waitEpubTextReady(120_000);
+    };
+    const checkReader = async (label: string, flow: Flow, minChars: number, opts?: { requireChapterAdvance?: boolean }) => {
+      const requireChapterAdvance = opts?.requireChapterAdvance ?? flow === "scrolled";
+      const visible = await waitViewportVisibleText(minChars, 60_000);
+      const info = await callSmokeApi<Info>("epubReaderRenderInfo");
+      if (info.flow !== flow) throw new Error(`${label}: reader flow ${info.flow}, expected ${flow}`);
+      if (info.mode === "iframe" && info.textWidthRatio < 0.5) {
+        throw new Error(`${label}: text spans only ${Math.round(info.textWidthRatio * 100)} % of the pane (empty strip)`);
+      }
+      const before = info.sectionIndex;
+      await $("#btn-reader-next").click();
+      await browser.pause(900);
+      const afterNext = await waitViewportVisibleText(3, 30_000);
+      const sectionAfterNext = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      // sample.epub is a single spine item — Posouvání cannot advance a chapter there.
+      if (
+        requireChapterAdvance &&
+        flow === "scrolled" &&
+        info.mode === "iframe" &&
+        (sectionAfterNext ?? -1) <= (before ?? -1)
+      ) {
+        throw new Error(`${label}: "Další kapitola" did not move (${before} → ${sectionAfterNext})`);
+      }
+      results[label] = { visible, afterNext, mode: info.mode, ratio: info.textWidthRatio, before, sectionAfterNext };
+    };
+
+    try {
+      if (!mobiMultiSource) throw new Error("MARGINALIA_FIXTURE_MOBI_MULTI not set");
+      await chooseFlow("paginated");
+      await openHamlet();
+      await checkReader("hamlet-paginated", "paginated", 50);
+      await saveScreenshot("smoke-mobi-hamlet-paginated.png");
+      await openEpubFromLibraryCard();
+      await checkReader("epub-paginated", "paginated", 3, { requireChapterAdvance: false });
+      await saveScreenshot("smoke-epub-paginated.png");
+
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      await reloadAppSession();
+      await $('[data-route="settings"]').click();
+      await browser.waitUntil(
+        async () =>
+          ((await $('[data-reader-flow="paginated"]').getAttribute("class")) ?? "").includes("theme-picker__btn--on"),
+        { timeout: 15_000, timeoutMsg: "reading mode Stránkování lost after restart" },
+      );
+      await saveScreenshot("smoke-reader-flow-settings-after-restart.png");
+      await openHamlet();
+      await checkReader("hamlet-paginated-after-restart", "paginated", 50);
+
+      await chooseFlow("scrolled");
+      await openHamlet();
+      await checkReader("hamlet-scrolled", "scrolled", 50);
+      await saveScreenshot("smoke-mobi-hamlet-scrolled.png");
+      await openEpubFromLibraryCard();
+      await checkReader("epub-scrolled", "scrolled", 3, { requireChapterAdvance: false });
+      await saveScreenshot("smoke-epub-scrolled.png");
+
+      record("S26", "Režim čtení: oba režimy (MOBI + EPUB) + perzistence po restartu", true, JSON.stringify(results));
+    } catch (e) {
+      record("S26", "Režim čtení: oba režimy (MOBI + EPUB) + perzistence po restartu", false, `${String(e)} ${JSON.stringify(results)}`);
+      throw e;
+    }
+  }).timeout(600_000);
+
+  it("S27 poznámky: 3× Nová nic nepřepíše, přejmenování, vše přežije restart", async () => {
+    const stamp = Date.now().toString(36);
+    const listFilenames = async () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map((el) => el.dataset.noteFilename ?? ""),
+      );
+    const openNotes = async () => {
+      await $('[data-route="notes"]').click();
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
+    };
+    const created: { filename: string; text: string }[] = [];
+    try {
+      await openNotes();
+      for (let i = 1; i <= 3; i += 1) {
+        const before = await listFilenames();
+        await $("#btn-new-note").click();
+        await browser.waitUntil(async () => (await listFilenames()).length === before.length + 1, {
+          timeout: 15_000,
+          timeoutMsg: `note ${i} did not appear in the list`,
+        });
+        const filename = (await listFilenames()).find((f) => !before.includes(f));
+        if (!filename) throw new Error(`note ${i}: new filename missing`);
+        const text = `Obsah poznámky ${i} ${stamp}`;
+        await $(".cm-content").click();
+        await browser.keys(["End"]);
+        await browser.keys(text.split(""));
+        await browser.pause(1500);
+        created.push({ filename, text });
+      }
+      const names = created.map((c) => c.filename);
+      if (new Set(names).size !== 3) throw new Error(`notes share a file: ${names.join(", ")}`);
+
+      const renamedTitle = `Smoke prejmenovana ${stamp}`;
+      const targetFilename = created[1].filename;
+      const targetTitle = targetFilename.replace(/\.md$/, "");
+      await $(`.note-list-item[data-note-filename="${targetFilename}"]`).click();
+      // The click handler awaits a full notes remount — wait for that paint, not the pre-click DOM.
+      await browser.waitUntil(
+        async () =>
+          (await $(".notes-layout").getAttribute("data-active-note-filename")) === targetFilename &&
+          ((await $("#note-title").getValue()) ?? "") === targetTitle,
+        { timeout: 15_000, timeoutMsg: "note title field did not show the selected note after remount" },
+      );
+      await browser.pause(400);
+      await browser.execute((nextTitle) => {
+        const input = document.getElementById("note-title") as HTMLInputElement | null;
+        if (!input) throw new Error("#note-title missing");
+        input.focus();
+        input.value = nextTitle;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.blur();
+      }, renamedTitle);
+      // Force blur away from the title field in case WebView skipped the programmatic blur event.
+      await $(".notes-list__header .section-title").click();
+      await browser.waitUntil(
+        async () => {
+          const names = await listFilenames();
+          const active = (await $(".notes-layout").getAttribute("data-active-note-filename")) ?? "";
+          const state = (await $(".notes-layout").getAttribute("data-note-rename")) ?? "";
+          if (state === "error") {
+            const err = (await $(".notes-layout").getAttribute("data-note-rename-error")) ?? "";
+            throw new Error(`note rename reported error in UI: ${err}`);
+          }
+          return names.includes(`${renamedTitle}.md`) || active === `${renamedTitle}.md`;
+        },
+        { timeout: 20_000, timeoutMsg: "renamed note not in the list" },
+      );
+      const oldName = created[1].filename;
+      created[1].filename = `${renamedTitle}.md`;
+      await saveScreenshot("smoke-notes-renamed.png");
+
+      await reloadAppSession();
+      await openNotes();
+      const after = await listFilenames();
+      if (after.includes(oldName)) throw new Error(`old filename still present after rename: ${oldName}`);
+      const disk: Record<string, string> = {};
+      for (const c of created) {
+        if (!after.includes(c.filename)) throw new Error(`after restart missing in list: ${c.filename}`);
+        const md = await readLibraryText(`poznamky/${c.filename}`);
+        if (!md.includes(c.text)) throw new Error(`after restart ${c.filename} lost its text: ${md.slice(0, 200)}`);
+        const expectedTitle = c.filename.replace(/\.md$/, "");
+        if (!md.includes(`title: ${JSON.stringify(expectedTitle)}`)) {
+          throw new Error(`${c.filename}: frontmatter title is not "${expectedTitle}"`);
+        }
+        disk[c.filename] = md.length + " B";
+      }
+      await $(`[data-note-filename="${created[1].filename}"]`).click();
+      await browser.pause(800);
+      await saveScreenshot("smoke-notes-three-after-restart.png");
+      record("S27", "Poznámky: 3× Nová, přejmenování, restart", true, JSON.stringify({ disk, oldName }));
+    } catch (e) {
+      record("S27", "Poznámky: 3× Nová, přejmenování, restart", false, `${String(e)} ${JSON.stringify(created)}`);
+      throw e;
+    }
+  }).timeout(300_000);
+
+  it("S28 zvýraznění: PDF DOM + EPUB/MOBI foliate overlay, obnova po znovuotevření", async () => {
+    const result: Record<string, unknown> = {};
+    const waitPaint = async (label: string) => {
+      let count = 0;
+      await browser.waitUntil(
+        async () => {
+          count = await callSmokeApi<number>("readerHighlightPaintCount");
+          return count > 0;
+        },
+        { timeout: 30_000, interval: 300, timeoutMsg: `${label}: no highlight in DOM/overlay` },
+      );
+      return count;
+    };
+    const openHamlet = async () => {
+      await goLibrary();
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await waitEpubTextReady(120_000);
+    };
+
+    try {
+      await openPdfFromLibraryCard();
+      const pdfQuote = await callSmokeApi<{ quoteId: string }>("createPdfQuoteFromSelection");
+      const pdfPainted = await waitPaint("PDF just saved");
+      await saveScreenshot("smoke-highlight-pdf-painted.png");
+      await openPdfFromLibraryCard();
+      const pdfRestored = await waitPaint("PDF reopened");
+      await saveScreenshot("smoke-highlight-pdf-restored.png");
+      result.pdf = { quoteId: pdfQuote.quoteId, painted: pdfPainted, restored: pdfRestored };
+
+      await openEpubFromLibraryCard();
+      const epubQuote = await callSmokeApi<{ quoteId: string }>("createEpubQuoteFromSelection");
+      const epubPainted = await waitPaint("EPUB just saved");
+      await saveScreenshot("smoke-highlight-epub-painted.png");
+      await openEpubFromLibraryCard();
+      const epubRestored = await waitPaint("EPUB reopened");
+      await saveScreenshot("smoke-highlight-epub-restored.png");
+      result.epub = { quoteId: epubQuote.quoteId, painted: epubPainted, restored: epubRestored };
+
+      await openHamlet();
+      const mobiQuote = await callSmokeApi<{ quoteId: string }>("createEpubQuoteFromSelection");
+      const mobiPainted = await waitPaint("MOBI just saved");
+      await saveScreenshot("smoke-highlight-mobi-painted.png");
+      await openHamlet();
+      const mobiRestored = await waitPaint("MOBI reopened");
+      await saveScreenshot("smoke-highlight-mobi-restored.png");
+      result.mobi = { quoteId: mobiQuote.quoteId, painted: mobiPainted, restored: mobiRestored };
+
+      record("S28", "Zvýraznění PDF DOM + EPUB/MOBI overlay, obnova", true, JSON.stringify(result));
+    } catch (e) {
+      record("S28", "Zvýraznění PDF DOM + EPUB/MOBI overlay, obnova", false, `${String(e)} ${JSON.stringify(result)}`);
+      throw e;
+    }
+  }).timeout(420_000);
+
+  it("S29 poznámka je v DOM právě jednou (jeden editor, bez druhého náhledu)", async () => {
+    const phrase = `JEDINY-VYSKYT-${Date.now().toString(36)}`;
+    try {
+      await $('[data-route="notes"]').click();
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
+      const before = await browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map((el) => el.dataset.noteFilename ?? ""),
+      );
+      await $("#btn-new-note").click();
+      await browser.waitUntil(
+        async () => {
+          const names = await browser.execute(() =>
+            Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map(
+              (el) => el.dataset.noteFilename ?? "",
+            ),
+          );
+          return names.length === before.length + 1 && (await $(".notes-editor-pane .cm-content").isExisting());
+        },
+        { timeout: 20_000, timeoutMsg: "new note editor not ready" },
+      );
+      const editor = await $(".notes-editor-pane .cm-content");
+      await editor.waitForDisplayed({ timeout: 10_000 });
+      await editor.click();
+      await browser.keys(["End"]);
+      await browser.keys(phrase.split(""));
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute((needle) => (document.body.textContent ?? "").includes(needle), phrase)) === true,
+        { timeout: 10_000, timeoutMsg: "typed note text never appeared in the DOM" },
+      );
+      const dom = await browser.execute((needle) => {
+        const text = document.body.textContent ?? "";
+        return {
+          occurrences: text.split(needle).length - 1,
+          editors: document.querySelectorAll(".notes-editor-pane .cm-editor").length,
+          previews: document.querySelectorAll(".notes-editor-pane #preview-root").length,
+        };
+      }, phrase);
+      if (dom.occurrences !== 1 || dom.editors !== 1 || dom.previews !== 0) {
+        throw new Error(`single editor invariant failed: ${JSON.stringify(dom)}`);
+      }
+      await saveScreenshot("smoke-note-single-editor.png");
+      record("S29", "Poznámka právě jednou v DOM (jeden editor)", true, JSON.stringify(dom));
+    } catch (e) {
+      record("S29", "Poznámka právě jednou v DOM (jeden editor)", false, String(e));
+      throw e;
+    }
+  }).timeout(120_000);
 });

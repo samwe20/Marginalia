@@ -175,7 +175,10 @@ pub fn smoke_epub_fixture_paragraph() -> Result<String, String> {
     let mut best = String::new();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = entry.name().to_lowercase();
+        let name = entry
+            .name()
+            .map_err(|e| e.to_string())?
+            .to_ascii_lowercase();
         if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
             continue;
         }

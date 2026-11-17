@@ -5,6 +5,7 @@ const STORE = "marginalia-prefs.json";
 const KEY_LIBRARY = "libraryRoot";
 const KEY_RECENT = "recentBooks";
 const KEY_DEMO = "demoEnabled";
+const KEY_READER_FLOW = "readerFlow";
 
 let storePromise: ReturnType<typeof loadStore> | null = null;
 
@@ -68,5 +69,23 @@ export async function saveDesktopDemoEnabled(enabled: boolean): Promise<void> {
   if (!isTauri()) return;
   const s = await store();
   await s.set(KEY_DEMO, enabled);
+  await s.save();
+}
+
+export async function loadDesktopReaderFlow(): Promise<"paginated" | "scrolled" | null> {
+  if (!isTauri()) return null;
+  try {
+    const s = await store();
+    const value = await s.get<string>(KEY_READER_FLOW);
+    return value === "paginated" || value === "scrolled" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDesktopReaderFlow(flow: "paginated" | "scrolled"): Promise<void> {
+  if (!isTauri()) return;
+  const s = await store();
+  await s.set(KEY_READER_FLOW, flow);
   await s.save();
 }

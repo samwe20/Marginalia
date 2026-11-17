@@ -6,14 +6,24 @@ export type SmokeTestApi = {
   dropBookFromPath: (libraryRoot: string, filePath: string) => Promise<void>;
   createPdfQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   createEpubQuoteFromSelection: () => Promise<SmokeQuoteResult>;
+  /** Actual painted marks in the PDF DOM or foliate SVG overlayer, not stored quote count. */
+  readerHighlightPaintCount: () => number;
   epubReaderReady: () => boolean;
   epubVisibleTextLength: () => number;
+  /** Characters whose rendered boxes intersect the window (not just present in the DOM). */
+  epubViewportVisibleTextLength: () => number;
+  epubCurrentSectionIndex: () => number | null;
+  epubNextSection: () => Promise<number | null>;
   ensureEpubReaderReady: () => Promise<number>;
   epubReaderRenderInfo: () => {
     mode: "iframe" | "fallback" | "empty";
     iframeTextLength: number;
     fallbackTextLength: number;
     visibleTextLength: number;
+    viewportVisibleTextLength: number;
+    sectionIndex: number | null;
+    flow: "paginated" | "scrolled";
+    textWidthRatio: number;
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;

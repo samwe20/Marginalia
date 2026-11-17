@@ -55,11 +55,19 @@ import {
   recordFolderPickerInvocation,
   resetFolderPickerInvocationCount,
 } from "./lib/library-root-telemetry";
-import { createBlankNote, saveNote } from "./lib/notes";
+import { createNote } from "./lib/notes";
 import { renderUserQuoteCardHtml } from "./ui/user-quote-card";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
+import { loadReaderPosition, saveReaderPosition } from "./lib/reader-position";
+import {
+  foliateNavLabels,
+  hydrateReaderFlow,
+  loadReaderFlow,
+  saveReaderFlow,
+  type FoliateFlow,
+} from "./lib/reader-flow";
 import {
   DEMO_ENABLED_KEY,
   disableDemoData,
@@ -911,6 +919,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const renderSettings = () => {
     const demoOn = isDemoEnabled();
     const themePref = themeCtrl.getPreference();
+    const readerFlow = loadReaderFlow();
     stageMain.innerHTML = `
       <div class="page">
         <h1>Nastavení</h1>
@@ -926,6 +935,22 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           <button type="button" class="chip-btn theme-picker__btn${themePref === "system" ? " theme-picker__btn--on" : ""}" data-theme-pref="system">Systém</button>
           <button type="button" class="chip-btn theme-picker__btn${themePref === "light" ? " theme-picker__btn--on" : ""}" data-theme-pref="light">Světlý</button>
           <button type="button" class="chip-btn theme-picker__btn${themePref === "dark" ? " theme-picker__btn--on" : ""}" data-theme-pref="dark">Tmavý</button>
+        </div>
+        <hr class="settings-sep" />
+        <h2 class="section-title">Čtení EPUB/MOBI</h2>
+        <p class="muted">Posouvání: text plyne svisle, tlačítka přeskakují kapitoly. Stránkování: jeden sloupec na stránku, tlačítka listují.</p>
+        <div class="theme-picker" role="radiogroup" aria-label="Režim čtení">
+          ${(
+            [
+              ["scrolled", "Posouvání"],
+              ["paginated", "Stránkování"],
+            ] as Array<[FoliateFlow, string]>
+          )
+            .map(
+              ([flow, label]) =>
+                `<button type="button" role="radio" aria-checked="${readerFlow === flow}" class="chip-btn theme-picker__btn${readerFlow === flow ? " theme-picker__btn--on" : ""}" data-reader-flow="${flow}">${label}</button>`,
+            )
+            .join("")}
         </div>
         <hr class="settings-sep" />
         <h2 class="section-title">Ukázková data</h2>
@@ -946,6 +971,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           pref === "system" ? "Motiv: podle systému" : pref === "light" ? "Motiv: světlý" : "Motiv: tmavý",
           "success",
         );
+        renderSettings();
+      });
+    });
+    stageMain.querySelectorAll<HTMLElement>("[data-reader-flow]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const flow = btn.dataset.readerFlow as FoliateFlow;
+        await saveReaderFlow(flow);
+        toast(flow === "scrolled" ? "Čtení: posouvání" : "Čtení: stránkování", "success");
         renderSettings();
       });
     });
@@ -1054,13 +1087,22 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const mountReaderChrome = (kind: BookFileKind, title: string) => {
     const foliate = kind !== "pdf";
+    const navLabels = foliateNavLabels(loadReaderFlow());
     stageMain.innerHTML = `
       <div class="reader-layout">
         <div class="reader-toolbar">
           <button type="button" class="ghost-btn" id="btn-back-library">← Knihovna</button>
           <span class="muted">${escapeHtml(title)} · ${kind.toUpperCase()}</span>
+          ${
+            foliate
+              ? `<span class="reader-section-nav">
+            <button type="button" class="ghost-btn" id="btn-reader-prev" title="${navLabels.prevTitle}" aria-label="${navLabels.prevTitle}">${navLabels.prev}</button>
+            <button type="button" class="ghost-btn" id="btn-reader-next" title="${navLabels.nextTitle}" aria-label="${navLabels.nextTitle}">${navLabels.next}</button>
+          </span>`
+              : ""
+          }
         </div>
-        <div class="reader-surface">
+        <div class="reader-surface${foliate ? " reader-surface--foliate" : ""}">
           <div id="${foliate ? "epub-root" : "pdf-root"}" class="${foliate ? "epub-root" : "pdf-root"}"></div>
         </div>
         <div class="reader-page-counter" id="reader-page-counter" ${foliate ? "hidden" : ""} aria-live="polite">—</div>
@@ -1076,6 +1118,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       state.book = null;
       setRoute("library");
     });
+    stageMain.querySelector("#btn-reader-prev")?.addEventListener("click", () => void epub?.navigatePrev());
+    stageMain.querySelector("#btn-reader-next")?.addEventListener("click", () => void epub?.navigateNext());
   };
 
   const promptOpenBook = async () => {
@@ -1136,7 +1180,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     await ensureBookCard(state.libraryRoot, state.book);
     await refreshInspectorAfterQuoteSave(state.slug);
     const now = new Date().toISOString();
-    const selectionHint = () => toast("Označení připraveno — stiskněte H pro uložení citace", "info");
 
     if (fileKind === "pdf") {
       pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
@@ -1146,7 +1189,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pdf = new PdfReader({
         container: pdfRoot,
         getMode: () => state.mode,
-        onSelectionPending: selectionHint,
         onHighlight: async ({ text, pageIndex, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
           await refreshInspectorAfterQuoteSave(state.slug);
@@ -1167,10 +1209,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       mountReaderChrome(fileKind, state.book.title);
       enterReaderMode();
       const epubRoot = stageMain.querySelector("#epub-root") as HTMLElement;
+      const positionSlug = state.slug;
       epub = new EpubReader({
         container: epubRoot,
+        flow: loadReaderFlow(),
+        initialCfi: loadReaderPosition(positionSlug),
+        onRelocate: (cfi) => saveReaderPosition(positionSlug, cfi),
         getMode: () => state.mode,
-        onSelectionPending: selectionHint,
         onHighlightSaveKey: () => {
           if (state.route !== "reader" || state.mode !== "highlight") return;
           const saved = epub?.commitPendingHighlight();
@@ -1304,8 +1349,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
+    readerHighlightPaintCount: () =>
+      pdf?.highlightPaintCount() ?? epub?.highlightPaintCount() ?? 0,
     epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
     epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
+    epubViewportVisibleTextLength: () => epub?.viewportVisibleTextLength() ?? 0,
+    epubCurrentSectionIndex: () => epub?.currentSectionIndex() ?? null,
+    epubNextSection: async () => {
+      if (!epub) throw new Error("EPUB reader not active");
+      await epub.nextSection();
+      await new Promise((r) => window.setTimeout(r, 600));
+      return epub.currentSectionIndex();
+    },
     ensureEpubReaderReady: async () => {
       if (!epub) throw new Error("EPUB reader not active");
       const deadline = Date.now() + 45_000;
@@ -1325,6 +1380,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           iframeTextLength: 0,
           fallbackTextLength: 0,
           visibleTextLength: 0,
+          viewportVisibleTextLength: 0,
+          sectionIndex: null,
+          flow: loadReaderFlow(),
+          textWidthRatio: 0,
           iframeElementInLightDom: false,
         };
       }
@@ -1423,12 +1482,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     verifyDialogPlugin: smokeVerifyDialogPlugin,
     seedWikilinkBacklink: async () => {
       if (!(await requireLibraryConfigured())) throw new Error("No library root");
-      const targetTitle = "Smoke cíl";
-      const target = createBlankNote(targetTitle);
-      await saveNote(state.libraryRoot, target);
-      const source = createBlankNote("Smoke zdroj");
-      source.body = `Odkaz na [[${targetTitle}]].\n`;
-      await saveNote(state.libraryRoot, source);
+      const target = await createNote(state.libraryRoot, "Smoke cíl");
+      const targetTitle = target.title;
+      await createNote(state.libraryRoot, "Smoke zdroj", `Odkaz na [[${targetTitle}]].\n`);
       await reindexLinks();
       const backlinks = linkIndex.getBacklinks(noteIndexPath(target.filename));
       return { targetTitle, backlinkCount: backlinks.length };
@@ -1553,7 +1609,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   });
 
-  await hydrateRecents();
+  await Promise.all([hydrateRecents(), hydrateReaderFlow()]);
   if (isTauri() && (await loadDesktopDemoEnabled())) {
     localStorage.setItem(DEMO_ENABLED_KEY, "1");
   }
