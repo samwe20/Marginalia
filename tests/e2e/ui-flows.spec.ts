@@ -40,19 +40,18 @@ test.describe("UI flows (web build)", () => {
     await expect(page.locator("#note-backlinks-pane .backlinks-header")).toBeVisible();
   });
 
-  test("globální hledání (ukázková data)", async ({ page }) => {
-    await page.locator('.nav-item[data-route="search"]').click();
-    const input = page.locator("#search-input");
+  test("hledání na stránce Citace (ukázková data)", async ({ page }) => {
+    await page.locator('.nav-item[data-route="quotes"]').click();
+    const input = page.locator("#quotes-filter, #search-input").first();
     await input.fill("Hamlet");
-    await input.press("Enter");
-    await expect(page.locator("#search-results .quote-db-card").first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/hamlet/i).first()).toBeVisible();
+    await expect(page.getByText(/hamlet/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test("klávesová zkratka Ctrl+F otevře hledání", async ({ page }) => {
+  test("klávesová zkratka Ctrl+F fokuskuje hledání na stránce", async ({ page }) => {
     await page.locator('.nav-item[data-route="library"]').click();
     await page.keyboard.press("Control+f");
-    await expect(page.locator("#search-input")).toBeVisible();
+    await expect(page.locator("#library-filter")).toBeVisible();
+    await expect(page.locator("#library-filter")).toBeFocused();
   });
 
   test("světlý/tmavý režim (data-theme)", async ({ page }) => {

@@ -59,11 +59,15 @@ export async function renderNotesView(
             <h2 class="section-title">Poznámky</h2>
             <button type="button" class="ghost-btn solid" id="btn-new-note">Nová</button>
           </div>
+          <label class="field field--inline page-search notes-filter">
+            <span class="sr-only">Hledat v poznámkách</span>
+            <input type="search" id="notes-filter" placeholder="Hledat poznámky…" autocomplete="off" />
+          </label>
           <ul class="notes-list__items">
             ${all
               .map(
                 (n) =>
-                  `<li><button type="button" class="note-list-item${current?.id === n.id ? " active" : ""}" data-note-id="${escapeHtml(n.id)}" data-note-filename="${escapeHtml(n.filename)}">${escapeHtml(n.title)}</button></li>`,
+                  `<li><button type="button" class="note-list-item${current?.id === n.id ? " active" : ""}" data-note-id="${escapeHtml(n.id)}" data-note-filename="${escapeHtml(n.filename)}" data-note-title="${escapeHtml(n.title)}">${escapeHtml(n.title)}</button></li>`,
               )
               .join("")}
           </ul>
@@ -87,6 +91,15 @@ export async function renderNotesView(
       saveTimer = null;
       if (!current.id.startsWith("demo-")) await saveNote(ctx.libraryRoot, current);
     };
+
+    stageMain.querySelector<HTMLInputElement>("#notes-filter")?.addEventListener("input", (ev) => {
+      const q = (ev.target as HTMLInputElement).value.trim().toLowerCase();
+      stageMain.querySelectorAll<HTMLElement>(".note-list-item").forEach((btn) => {
+        const title = (btn.dataset.noteTitle || btn.textContent || "").toLowerCase();
+        const li = btn.closest("li");
+        if (li) li.style.display = !q || title.includes(q) ? "" : "none";
+      });
+    });
 
     stageMain.querySelector("#btn-new-note")?.addEventListener("click", async () => {
       await flushSave();

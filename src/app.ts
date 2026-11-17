@@ -1259,6 +1259,17 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   await wireSmokeAutomation(openBookFromAbsolutePath);
 
+  window.addEventListener("keydown", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== "f") return;
+    const el =
+      document.querySelector<HTMLInputElement>("#library-filter, #quotes-filter, #notes-filter, #search-input");
+    if (!el) return;
+    ev.preventDefault();
+    el.focus();
+    el.select();
+  });
+
+
   installSmokeTestApi({
     dropBookFromPath: async (libraryRoot, filePath) => {
       if (!libraryRoot) {
