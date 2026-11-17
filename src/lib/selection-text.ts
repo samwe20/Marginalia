@@ -2,19 +2,39 @@
 
 export function selectionTextFromRange(range: Range, root?: HTMLElement): string {
   // Prefer Selection API string — it usually inserts newlines at block boundaries.
-  let raw = range.toString();
-  if (!raw.trim() && root) {
-    raw = (root.ownerDocument?.defaultView?.getSelection()?.toString() ?? "") || raw;
+  const selStr = root?.ownerDocument?.defaultView?.getSelection()?.toString() ?? "";
+  let raw = (selStr || range.toString()).replace(/\u00a0/g, " ");
+
+  const textLayer = findTextLayer(range, root);
+  const reconstructRoot = textLayer ?? root;
+  // PDF.js text layers omit spaces between sibling spans; always rebuild when possible.
+  if (reconstructRoot && (textLayer || looksGlued(raw))) {
+    const rebuilt = reconstructWithGaps(range, reconstructRoot);
+    if (rebuilt.trim()) raw = rebuilt;
   }
-  // PDF.js text layers often omit spaces between span siblings in toString().
-  if (root && looksGlued(raw)) {
-    raw = reconstructWithGaps(range, root) || raw;
-  }
-  return normalizeQuoteText(raw);
+
+  raw = normalizeQuoteText(raw);
+  if (looksGlued(raw)) raw = softUnglue(raw);
+  return raw;
+}
+
+function findTextLayer(range: Range, root?: HTMLElement): HTMLElement | null {
+  const fromRoot = root?.closest?.(".textLayer") as HTMLElement | null | undefined;
+  if (fromRoot) return fromRoot;
+  const node = range.commonAncestorContainer;
+  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  return (el?.closest(".textLayer") as HTMLElement | null) ?? null;
 }
 
 function looksGlued(s: string): boolean {
   return /[a-zA-Zá-žÁ-Ž][A-ZÁ-Ž]/.test(s) || /[.?!,;:][A-Za-zá-žÁ-Ž]/.test(s);
+}
+
+/** Last-resort spacing when PDF.js left no geometry to rebuild from. */
+function softUnglue(s: string): string {
+  return s
+    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
+    .replace(/([.?!,;:])([\p{L}])/gu, "$1\n$2");
 }
 
 function reconstructWithGaps(range: Range, root: HTMLElement): string {
@@ -22,6 +42,7 @@ function reconstructWithGaps(range: Range, root: HTMLElement): string {
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const parts: string[] = [];
   let prevBottom: number | null = null;
+  let prevRight: number | null = null;
   let started = false;
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
@@ -29,21 +50,39 @@ function reconstructWithGaps(range: Range, root: HTMLElement): string {
     const slice = textSliceInRange(range, node);
     if (!slice) continue;
     let rectBottom: number | null = null;
+    let rectLeft: number | null = null;
+    let rectRight: number | null = null;
     try {
       const r = doc.createRange();
-      r.selectNodeContents(node);
+      const start =
+        node === range.startContainer ? range.startOffset : 0;
+      const end = node === range.endContainer ? range.endOffset : node.data.length;
+      r.setStart(node, Math.min(start, node.data.length));
+      r.setEnd(node, Math.min(Math.max(end, start), node.data.length));
       const rects = r.getClientRects();
-      if (rects.length) rectBottom = rects[rects.length - 1]!.bottom;
+      if (rects.length) {
+        const first = rects[0]!;
+        const last = rects[rects.length - 1]!;
+        rectBottom = last.bottom;
+        rectLeft = first.left;
+        rectRight = last.right;
+      }
     } catch {
       /* */
     }
     if (started) {
-      if (prevBottom != null && rectBottom != null && rectBottom - prevBottom > 4) parts.push("\n");
+      const newLine =
+        prevBottom != null &&
+        rectBottom != null &&
+        (rectBottom - prevBottom > 3 ||
+          (rectLeft != null && prevRight != null && rectLeft + 2 < prevRight - 8));
+      if (newLine) parts.push("\n");
       else if (!/\s$/.test(parts[parts.length - 1] ?? "") && !/^\s/.test(slice)) parts.push(" ");
     }
     parts.push(slice);
     started = true;
     if (rectBottom != null) prevBottom = rectBottom;
+    if (rectRight != null) prevRight = rectRight;
   }
   return parts.join("");
 }
@@ -70,10 +109,7 @@ function textSliceInRange(range: Range, node: Text): string {
   if (start >= end) {
     // Partial overlap via compare — take intersection when node is fully inside.
     try {
-      if (
-        range.comparePoint(node, 0) <= 0 &&
-        range.comparePoint(node, full.length) >= 0
-      ) {
+      if (range.comparePoint(node, 0) <= 0 && range.comparePoint(node, full.length) >= 0) {
         return full;
       }
     } catch {
