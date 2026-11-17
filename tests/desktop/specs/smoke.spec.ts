@@ -552,6 +552,12 @@ async function openQuotesTab() {
 
 async function openPdfFromLibraryCard() {
   await goLibrary();
+  await browser.waitUntil(
+    async () =>
+      (await $("[data-library-ready='1']").isExisting()) &&
+      (await $$('.book-card[data-kind="pdf"]:not(.book-card--demo)')).length > 0,
+    { timeout: 20_000, timeoutMsg: "library PDF card not ready" },
+  );
   const card = await $('.book-card[data-kind="pdf"]:not(.book-card--demo)');
   await expect(card).toBeDisplayed();
   await card.click();
@@ -1816,15 +1822,26 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const files = await quoteFilesOnDisk(slug);
       const newest = files[files.length - 1]!;
       const md = await readLibraryText(`citace/${slug}/${newest}`);
-      // Spaces or newlines must exist between words that would otherwise glue
-      if (/[a-zA-Z][A-Z]/.test(md) && /ardent|fervent|warm/i.test(md)) {
-        // glued camel inside verse is a failure signal when expected words present
-        if (/me still\?Give|hands!Give|convulsedWith|smittenBy/i.test(md)) {
-          throw new Error(`glued quote text: ${md.slice(0, 200)}`);
+      // Check the visible quote body only — anchor JSON may keep PDF.js glued
+      // textContent for re-anchoring, which is not shown to the user.
+      const quoteBody = md
+        .replace(/^---[\s\S]*?\n---\s*/, "")
+        .split("\n")
+        .filter((line) => line.startsWith(">"))
+        .map((line) => line.replace(/^>\s?/, ""))
+        .join("\n");
+      if (/me still\?Give|hands!Give|convulsedWith|smittenBy/i.test(quoteBody)) {
+        throw new Error(`glued quote text: ${quoteBody.slice(0, 240)}`);
+      }
+      if (/ardent|fervent|warm/i.test(quoteBody)) {
+        const hasBreak =
+          /\n/.test(quoteBody) || /still\?\s+Give/i.test(quoteBody) || /hands!\s+Give/i.test(quoteBody);
+        if (!hasBreak && /still\?/i.test(quoteBody) && /Give/i.test(quoteBody)) {
+          throw new Error(`quote missing line break/space between verse lines: ${quoteBody.slice(0, 240)}`);
         }
       }
       await saveScreenshot("smoke-pdf-multiline-highlight.png");
-      record("S33", "PDF víceřádkový highlight + mezery", true, `painted=${painted}`);
+      record("S33", "PDF víceřádkový highlight + mezery", true, `painted=${painted} body=${quoteBody.slice(0, 80)}`);
     } catch (e) {
       record("S33", "PDF víceřádkový highlight + mezery", false, String(e));
       throw e;
