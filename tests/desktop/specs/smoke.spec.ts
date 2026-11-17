@@ -299,27 +299,11 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     );
     if (!rect) return dumpEpubPointerFailure("fallback-no-pointer-rect");
     await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-    let diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-    if (!epubContentSelectionOk(diag)) {
-      const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
-      if (prepared) diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-    }
-    if (!epubContentSelectionOk(diag)) {
-      return dumpEpubPointerFailure("fallback-no-selection", { rect, diag });
-    }
+    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
   const picked = await pickFoliateContentIframe();
-  if (!picked) {
-    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
-    if (prepared) {
-      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-      if (epubContentSelectionOk(diag)) {
-        return { space: "smoke-api-no-iframe", stayInFrame: false, selectionAfterDrag: diag, renderInfo };
-      }
-    }
-    return dumpEpubPointerFailure("foliate-shadow-iframe-missing", { prepared });
-  }
+  if (!picked) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
   const { ifr, iframeCount, picked: pickedIndex } = picked;
   const iframeMeta = { iframeCount, picked: pickedIndex };
   let dragTry: Awaited<ReturnType<typeof trySingleIframeOriginDrag>> | null = null;
@@ -363,28 +347,12 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   }
   if (alt.inFrame.length < 3 && !alt.inFrame.highlighterPending) {
     await browser.switchToFrame(null);
-    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
-    if (prepared) {
-      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-      if (epubContentSelectionOk(diag)) {
-        return {
-          space: "smoke-api-selection",
-          stayInFrame: false,
-          frameMeta: iframeMeta,
-          dragTry,
-          altSelect: alt,
-          selectionAfterDrag: diag,
-          renderInfo,
-        };
-      }
-    }
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return dumpEpubPointerFailure("after-iframe-alt-no-selection", {
       dragTry,
       alt,
       diag,
       iframeMeta,
-      prepared,
     });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
@@ -1295,7 +1263,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   });
 
-  it("S25 library cover cache survives restart", async () => {
+  it("S31 library cover cache survives restart", async () => {
     try {
       await openPdfFromLibraryCard();
       await goLibrary();
@@ -1308,8 +1276,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         return imgs.length + typos.length >= 1;
       });
       if (!hasVisual) throw new Error("no cover or typographic card in grid");
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       await openPdfFromLibraryCard();
       await goLibrary();
       await browser.pause(600);
@@ -1317,14 +1284,15 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         return document.querySelectorAll(".book-card__cover-image, .book-card .book-cover").length;
       });
       if (after < 1) throw new Error("covers missing after restart");
-      record("S25", "Library cover cache", true, `rows=${covers.length}`);
+      await saveScreenshot("smoke-library-covers-grid.png");
+      record("S31", "Library cover cache", true, `rows=${covers.length}`);
     } catch (e) {
-      record("S25", "Library cover cache", false, String(e));
+      record("S31", "Library cover cache", false, String(e));
       throw e;
     }
   });
 
-  it("S24 bibliography persists + copy citation", async () => {
+  it("S30 bibliography persists + copy citation", async () => {
     try {
       await openPdfFromLibraryCard();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
@@ -1335,15 +1303,17 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (!cardMd.includes("2019")) throw new Error("year not saved to card");
       await callSmokeApi("setBibliographyField", "title", "Smoke bibliografie dílo");
       await browser.pause(600);
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await saveScreenshot("smoke-bibliography-expanded.png");
+      await reloadAppSession();
       await openPdfFromLibraryCard();
       await callSmokeApi("openBibliographyPanel");
+      await saveScreenshot("smoke-bibliography-collapsed.png");
       const year = (await callSmokeApi<string>("getBibliographyField", "year")) ?? "";
       if (year !== "2019") throw new Error(`year not persisted after reload: ${year}`);
       await ensureInspectorOpen();
       let files = await quoteFilesOnDisk(slug);
       if (!files.length) {
+        // Setup for citation-copy only — not used by S15/S19 highlight path.
         await callSmokeApi("createPdfQuoteFromSelection");
         files = await quoteFilesOnDisk(slug);
       }
@@ -1352,9 +1322,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (!cite.includes("„") && !cite.includes("Fixture") && !cite.includes("Smoke")) {
         throw new Error(`unexpected citation: ${cite}`);
       }
-      record("S24", "Bibliography + copy citation", true, cite.slice(0, 80));
+      await saveScreenshot("smoke-citation-menu.png");
+      record("S30", "Bibliography + copy citation", true, cite.slice(0, 80));
     } catch (e) {
-      record("S24", "Bibliography + copy citation", false, String(e));
+      record("S30", "Bibliography + copy citation", false, String(e));
       throw e;
     }
   });
