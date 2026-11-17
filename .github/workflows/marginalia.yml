@@ -92,8 +92,13 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
+          $baseVersion = $version.Split("-")[0]
           $shortSha = "${{ github.sha }}".Substring(0, 7)
-          $fileName = "Marginalia-$version-test-$shortSha-setup.exe"
+          if ("${{ github.head_ref }}" -eq "cursor/integration-all-d744") {
+            $fileName = "Marginalia-$baseVersion-test-integration-$shortSha-setup.exe"
+          } else {
+            $fileName = "Marginalia-$version-test-$shortSha-setup.exe"
+          }
           $setup = Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (-not $setup) { throw "NSIS setup missing" }
           Copy-Item $setup.FullName $fileName
@@ -151,7 +156,8 @@ jobs:
           path: test-results/desktop-smoke
           if-no-files-found: warn
   windows-pr-test-release:
-    if: github.event_name == 'pull_request'
+    # Jan: publish an exe only from the all-PR integration branch after installed smoke is green.
+    if: github.event_name == 'pull_request' && github.head_ref == 'cursor/integration-all-d744'
     needs: [windows-build, windows-installed-smoke]
     runs-on: ubuntu-latest
     permissions:
