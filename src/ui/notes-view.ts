@@ -77,9 +77,12 @@ export async function renderNotesView(
     `;
 
     let saveTimer: number | null = null;
+    let saveGeneration = 0;
     /** Write any pending edit now, so a rename or note switch never resurrects or loses text. */
     const flushSave = async () => {
-      if (saveTimer == null || !current) return;
+      if (!current) return;
+      saveGeneration += 1; // invalidate any in-flight debounced save that could recreate the old file after rename
+      if (saveTimer == null) return;
       window.clearTimeout(saveTimer);
       saveTimer = null;
       if (!current.id.startsWith("demo-")) await saveNote(ctx.libraryRoot, current);
@@ -132,19 +135,23 @@ export async function renderNotesView(
       }
       if (nextTitle === note.title || note.id.startsWith("demo-")) return;
       renaming = true;
+      stageMain.querySelector(".notes-layout")?.setAttribute("data-note-rename", "pending");
       try {
         await flushSave();
         const renamed = await renameNote(ctx.libraryRoot, note, nextTitle);
+        Object.assign(note, renamed);
         await ctx.onReindex();
         await renderNotesView(stageMain, ctx, renamed.id);
       } catch (e) {
         console.error("Rename failed", e);
         titleInput.value = note.title;
+        stageMain.querySelector(".notes-layout")?.setAttribute("data-note-rename", "error");
         ctx.wiki.toast("Přejmenování selhalo", "error");
         renaming = false;
       }
     };
     titleInput.addEventListener("blur", () => void renameCurrent());
+    titleInput.addEventListener("change", () => void renameCurrent());
     titleInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -155,13 +162,17 @@ export async function renderNotesView(
     const scheduleSave = (text: string) => {
       current!.body = text;
       if (saveTimer) window.clearTimeout(saveTimer);
+      const gen = (saveGeneration += 1);
       saveTimer = window.setTimeout(() => {
         saveTimer = null;
+        if (gen !== saveGeneration) return;
         if (current!.id.startsWith("demo-")) {
           void ctx.onReindex();
           return;
         }
-        void saveNote(ctx.libraryRoot, current!).then(() => ctx.onReindex());
+        void saveNote(ctx.libraryRoot, current!).then(() => {
+          if (gen === saveGeneration) void ctx.onReindex();
+        });
       }, 600);
     };
 
