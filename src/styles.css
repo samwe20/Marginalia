@@ -911,11 +911,44 @@ body.setup-modal-open .workspace {
   line-height: 1.7;
 }
 
+/*
+ * foliate-paginator uses `container-type: size` + `height: 100%`: with an auto-height parent it
+ * collapses to 0 px and clips the whole book. Foliate readers therefore need a definite height
+ * chain (stage → reader-layout → surface → epub-root → foliate-view).
+ */
+.reader-surface--foliate {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.75rem 1.25rem 0;
+}
+
+.reader-surface--foliate .epub-root {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+}
+
 .epub-root foliate-view {
   display: block;
   width: 100%;
-  min-height: 420px;
   height: 100%;
+  min-height: 0;
+}
+
+.epub-fallback-text {
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 0.5rem 0.25rem 2rem;
+}
+
+.reader-section-nav {
+  display: inline-flex;
+  gap: 0.35rem;
+  margin-left: auto;
 }
 
 .pdf-page {

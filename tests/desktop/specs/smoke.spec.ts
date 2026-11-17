@@ -6,6 +6,7 @@ const library = process.env.MARGINALIA_SMOKE_LIBRARY!;
 const pdfPath = process.env.MARGINALIA_FIXTURE_PDF!;
 const epubPath = process.env.MARGINALIA_FIXTURE_EPUB!;
 const mobiPath = process.env.MARGINALIA_FIXTURE_MOBI ?? "";
+const mobiMultiSource = process.env.MARGINALIA_FIXTURE_MOBI_MULTI ?? "";
 const pdfExtraSource = process.env.MARGINALIA_FIXTURE_PDF_EXTRA!;
 const artifactDir =
   process.env.SMOKE_ARTIFACTS_DIR ?? path.join(process.cwd(), "test-results", "desktop-smoke");
@@ -459,6 +460,23 @@ async function waitEpubTextReady(timeoutMs = 120_000) {
   );
 }
 
+/** Characters whose rendered boxes intersect the window — what the user actually sees. */
+async function waitViewportVisibleText(minChars: number, timeoutMs: number): Promise<number> {
+  let last = 0;
+  await browser.waitUntil(
+    async () => {
+      last = (await callSmokeApi<number>("epubViewportVisibleTextLength")) ?? 0;
+      return last > minChars;
+    },
+    {
+      timeout: timeoutMs,
+      interval: 500,
+      timeoutMsg: `reader text not visible in viewport (visible chars=${last}, need >${minChars})`,
+    },
+  );
+  return last;
+}
+
 async function goLibrary() {
   await $('[data-route="library"]').click();
   await browser.pause(600);
@@ -642,6 +660,19 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       );
     } catch (e) {
       record("S07", "Open EPUB from library card", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S24 EPUB: text je vidět ve viewportu (bounding rect)", async () => {
+    try {
+      await ensureEpubReaderOpen();
+      const visible = await waitViewportVisibleText(3, 30_000);
+      const renderInfo = await callSmokeApi<Record<string, unknown>>("epubReaderRenderInfo");
+      await saveScreenshot("smoke-epub-viewport-visible.png");
+      record("S24", "EPUB viditelný text ve viewportu", true, JSON.stringify({ visible, renderInfo }));
+    } catch (e) {
+      record("S24", "EPUB viditelný text ve viewportu", false, String(e));
       throw e;
     }
   });
@@ -1162,4 +1193,59 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   });
+
+  it("S25 vícesekční MOBI (Hamlet): začátek knihy, viditelný text, obnovení pozice", async () => {
+    try {
+      if (!mobiMultiSource) throw new Error("MARGINALIA_FIXTURE_MOBI_MULTI not set");
+      const destFileName = "hamlet-pg1524.mobi";
+      await invoke("smoke_stage_file_in_library", {
+        libraryRoot: library,
+        destFileName,
+        sourcePath: mobiMultiSource,
+      });
+      await callSmokeApi("openBookAtPath", path.join(library, destFileName), library);
+      await waitEpubTextReady(120_000);
+      const visible = await waitViewportVisibleText(100, 60_000);
+      const startSection = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      if (startSection == null || startSection > 1) {
+        throw new Error(`Hamlet must open at the start of the book, got section ${startSection}`);
+      }
+      await saveScreenshot("smoke-mobi-hamlet-visible.png");
+
+      await callSmokeApi<number | null>("epubNextSection");
+      const movedTo = await callSmokeApi<number | null>("epubNextSection");
+      if (movedTo == null || movedTo <= startSection) {
+        throw new Error(`section navigation did not move (${startSection} → ${movedTo})`);
+      }
+      await waitViewportVisibleText(3, 30_000);
+      await browser.pause(800);
+
+      await $("#btn-back-library").click();
+      await browser.pause(800);
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library after open");
+      await waitEpubTextReady(120_000);
+      const reopenedVisible = await waitViewportVisibleText(3, 60_000);
+      const reopenedSection = await callSmokeApi<number | null>("epubCurrentSectionIndex");
+      if (reopenedSection !== movedTo) {
+        throw new Error(`reopen did not restore position: expected section ${movedTo}, got ${reopenedSection}`);
+      }
+      await saveScreenshot("smoke-mobi-hamlet-reopened.png");
+      record(
+        "S25",
+        "Vícesekční MOBI: start, viewport, obnovení pozice",
+        true,
+        JSON.stringify({ visible, startSection, movedTo, reopenedSection, reopenedVisible }),
+      );
+    } catch (e) {
+      record("S25", "Vícesekční MOBI: start, viewport, obnovení pozice", false, String(e));
+      throw e;
+    }
+  }).timeout(420_000);
 });

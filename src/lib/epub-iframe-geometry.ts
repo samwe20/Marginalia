@@ -112,6 +112,85 @@ export function findIframePointerRect(
   return null;
 }
 
+// nodeType checks, not instanceof: iframe documents belong to another JS realm.
+function parentAcrossBoundaries(el: Element): Element | null {
+  if (el.parentElement) return el.parentElement;
+  const root = el.getRootNode();
+  if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && "host" in root) return (root as ShadowRoot).host;
+  if (root.nodeType === Node.DOCUMENT_NODE) return (root as Document).defaultView?.frameElement ?? null;
+  return null;
+}
+
+function intersect(a: DOMRect, b: DOMRect): DOMRect {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  return new DOMRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+}
+
+/**
+ * Area of the top-level viewport in which `el` can actually paint: every ancestor with
+ * non-visible overflow clips it (including hosts inside closed shadow roots and frames).
+ */
+export function visibleClipRect(el: Element): DOMRect {
+  const topWin = window.top ?? window;
+  let clip = new DOMRect(0, 0, topWin.innerWidth, topWin.innerHeight);
+  let node: Element | null = el;
+  while (node) {
+    const doc = node.ownerDocument;
+    const style = doc.defaultView?.getComputedStyle(node);
+    if (style && (style.overflowX !== "visible" || style.overflowY !== "visible")) {
+      clip = intersect(clip, rectInTopViewport(doc, node.getBoundingClientRect()));
+    }
+    if (style && (style.display === "none" || style.visibility === "hidden")) {
+      return new DOMRect(0, 0, 0, 0);
+    }
+    node = parentAcrossBoundaries(node);
+  }
+  return clip;
+}
+
+/**
+ * Characters of text under `root` whose rendered boxes intersect the visible viewport
+ * (what the reader can see), not merely present in the DOM.
+ */
+export function visibleTextLengthIn(root: Element, cap = 4000): number {
+  const doc = root.ownerDocument;
+  const clip = visibleClipRect(root);
+  if (clip.width < 2 || clip.height < 2) return 0;
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  let total = 0;
+  let visited = 0;
+  let node = walker.nextNode() as Text | null;
+  while (node && visited < 20_000 && total < cap) {
+    visited += 1;
+    const len = node.textContent?.trim().length ?? 0;
+    if (len > 0) {
+      range.selectNodeContents(node);
+      for (const local of range.getClientRects()) {
+        const r = intersect(rectInTopViewport(doc, local), clip);
+        if (r.width >= 2 && r.height >= 2) {
+          total += len;
+          break;
+        }
+      }
+    }
+    node = walker.nextNode() as Text | null;
+  }
+  return total;
+}
+
+export function viewportVisibleTextLength(docs: Document[]): number {
+  let best = 0;
+  for (const doc of docs) {
+    if (!doc.body) continue;
+    best = Math.max(best, visibleTextLengthIn(doc.body));
+  }
+  return best;
+}
+
 function findFirstTextNode(root: Node): Text | null {
   const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode() as Text | null;

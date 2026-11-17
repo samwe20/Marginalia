@@ -39,6 +39,8 @@ $env:MARGINALIA_SMOKE_DEFER_LIBRARY = "1"
 $env:MARGINALIA_FIXTURE_PDF = Join-Path $shelfDir "sample.pdf"
 $env:MARGINALIA_FIXTURE_EPUB = Join-Path $libraryRoot "sample.epub"
 $env:MARGINALIA_FIXTURE_MOBI = Join-Path $libraryRoot "sample.mobi"
+# Multi-section real-world MOBI (Project Gutenberg #1524); staged into the library by S25 only.
+$env:MARGINALIA_FIXTURE_MOBI_MULTI = Join-Path $repoRoot "tests/fixtures/hamlet-pg1524.mobi"
 $env:MARGINALIA_FIXTURE_PDF_EXTRA = Join-Path $repoRoot "tests/fixtures/sample.pdf"
 $resultsDir = Join-Path $repoRoot "test-results\desktop-smoke"
 New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null

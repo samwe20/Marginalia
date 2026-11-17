@@ -8,12 +8,18 @@ export type SmokeTestApi = {
   createEpubQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   epubReaderReady: () => boolean;
   epubVisibleTextLength: () => number;
+  /** Characters whose rendered boxes intersect the window (not just present in the DOM). */
+  epubViewportVisibleTextLength: () => number;
+  epubCurrentSectionIndex: () => number | null;
+  epubNextSection: () => Promise<number | null>;
   ensureEpubReaderReady: () => Promise<number>;
   epubReaderRenderInfo: () => {
     mode: "iframe" | "fallback" | "empty";
     iframeTextLength: number;
     fallbackTextLength: number;
     visibleTextLength: number;
+    viewportVisibleTextLength: number;
+    sectionIndex: number | null;
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;

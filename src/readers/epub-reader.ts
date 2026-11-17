@@ -5,6 +5,8 @@ import {
   findFallbackPointerRect,
   findIframePointerRect,
   iframeVisibleTextLength,
+  viewportVisibleTextLength,
+  visibleTextLengthIn,
 } from "../lib/epub-iframe-geometry";
 import {
   attachHighlighter,
@@ -14,6 +16,7 @@ import {
   type HighlightMode,
 } from "../lib/highlighter";
 import { isTauri } from "../lib/runtime";
+import { FOLIATE_FLOW, type FoliateFlow } from "../lib/reader-flow";
 
 export interface EpubReaderOptions {
   container: HTMLElement;
@@ -26,18 +29,26 @@ export interface EpubReaderOptions {
   onSelectionPending?: () => void;
   /** Called when user presses H inside foliate iframe (focus there). */
   onHighlightSaveKey?: () => void;
+  /** Last reading position (EPUB CFI) to restore; otherwise the book opens at its start. */
+  initialCfi?: string | null;
+  onRelocate?: (cfi: string) => void;
+  flow?: FoliateFlow;
 }
 
 type FoliateView = HTMLElement & {
   open: (book: unknown) => Promise<void>;
   init?: (opts: { showTextStart?: boolean }) => Promise<void>;
   goToTextStart?: () => Promise<void>;
-  goTo: (target: string | number) => Promise<void>;
+  goTo: (target: string | number) => Promise<unknown>;
   getCFI: (range: Range) => string;
-  renderer?: {
+  next?: () => Promise<void>;
+  prev?: () => Promise<void>;
+  book?: { sections?: unknown[] };
+  renderer?: HTMLElement & {
     root?: HTMLElement;
     getContents?: () => { index: number; doc: Document }[];
-    addEventListener?: (type: string, fn: (e: Event) => void) => void;
+    next?: () => Promise<void>;
+    prev?: () => Promise<void>;
   };
 };
 
@@ -215,10 +226,55 @@ export class EpubReader {
     );
   }
 
-  readerRenderMode(): "iframe" | "fallback" | "empty" {
-    if (this.foliateIframeVisibleTextLength() > 3) return "iframe";
+  /** Text the reader can actually see in the window (foliate iframe or plain-text fallback). */
+  viewportVisibleTextLength(): number {
     const fallback = this.opts.container.querySelector(".epub-fallback-text");
-    if ((fallback?.textContent?.trim().length ?? 0) > 3) return "fallback";
+    const fallbackLen = fallback ? visibleTextLengthIn(fallback) : 0;
+    return Math.max(fallbackLen, this.iframeViewportVisibleTextLength());
+  }
+
+  private iframeViewportVisibleTextLength(): number {
+    if (!this.view || this.view.style.display === "none") return 0;
+    return viewportVisibleTextLength(this.contentDocuments());
+  }
+
+  currentSectionIndex(): number | null {
+    return this.view?.renderer?.getContents?.()?.[0]?.index ?? null;
+  }
+
+  private get flow(): FoliateFlow {
+    return this.opts.flow ?? FOLIATE_FLOW;
+  }
+
+  /** Reader toolbar buttons: turn the page when paginated, jump a chapter when scrolled. */
+  async navigateNext(): Promise<void> {
+    if (this.flow === "scrolled") await this.goToSectionOffset(1);
+    else await this.view?.next?.();
+  }
+
+  async navigatePrev(): Promise<void> {
+    if (this.flow === "scrolled") await this.goToSectionOffset(-1);
+    else await this.view?.prev?.();
+  }
+
+  async nextSection(): Promise<void> {
+    await this.goToSectionOffset(1);
+  }
+
+  private async goToSectionOffset(delta: number): Promise<void> {
+    const view = this.view;
+    const index = this.currentSectionIndex();
+    const count = view?.book?.sections?.length ?? 0;
+    if (!view || index == null) return;
+    const target = index + delta;
+    if (target < 0 || target >= count) return;
+    await view.goTo(target);
+  }
+
+  readerRenderMode(): "iframe" | "fallback" | "empty" {
+    if (this.iframeViewportVisibleTextLength() > 3) return "iframe";
+    const fallback = this.opts.container.querySelector(".epub-fallback-text");
+    if (fallback && visibleTextLengthIn(fallback) > 3) return "fallback";
     return "empty";
   }
 
@@ -227,6 +283,8 @@ export class EpubReader {
     iframeTextLength: number;
     fallbackTextLength: number;
     visibleTextLength: number;
+    viewportVisibleTextLength: number;
+    sectionIndex: number | null;
     iframeElementInLightDom: boolean;
   } {
     const fallback = this.opts.container.querySelector(".epub-fallback-text");
@@ -235,6 +293,8 @@ export class EpubReader {
       iframeTextLength: this.foliateIframeVisibleTextLength(),
       fallbackTextLength: fallback?.textContent?.trim().length ?? 0,
       visibleTextLength: this.visibleDomTextLength(),
+      viewportVisibleTextLength: this.viewportVisibleTextLength(),
+      sectionIndex: this.currentSectionIndex(),
       iframeElementInLightDom: Boolean(this.opts.container.querySelector("iframe")),
     };
   }
@@ -271,34 +331,28 @@ export class EpubReader {
     this.view = view;
 
     await view.open(book);
-    const sectionBook = book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] };
-    const startIndex = await this.findBestReadableSectionIndex(sectionBook);
-    const paginator = view.renderer as {
-      firstSection?: () => Promise<void>;
-      goTo?: (target: { index: number }) => Promise<void>;
-      next?: () => Promise<void>;
-    };
-    if (paginator?.goTo) await paginator.goTo({ index: startIndex });
-    else await view.goTo(startIndex);
-    await this.ensureVisibleSection(paginator, view, sectionBook, startIndex);
-    view.renderer?.addEventListener?.("load", () => {
+    if (this.flow === "scrolled") {
+      view.renderer?.setAttribute("flow", "scrolled");
+    } else {
+      // One column per page: the reader pane is ~42rem wide, a two-page spread would be unreadable.
+      view.renderer?.setAttribute("max-column-count", "1");
+      view.renderer?.setAttribute("max-inline-size", "720px");
+    }
+    view.renderer?.addEventListener("load", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
       this.wireHighlighter();
     });
-    view.renderer?.addEventListener?.("relocate", () => {
+    view.addEventListener("relocate", (e) => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
+      const cfi = (e as CustomEvent<{ cfi?: string }>).detail?.cfi;
+      if (cfi) this.opts.onRelocate?.(cfi);
     });
+    await this.goToStart(view);
     await this.waitForReadableContent(isMobi);
-    if (isMobi && this.visibleDomTextLength() <= 3) {
-      await this.captureFixturePlainText(
-        book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
-      );
-      this.mountPlainTextFallbackIfNeeded();
-    }
     this.mountPlainTextFallbackIfNeeded();
     this.wireHighlighter();
 
@@ -314,7 +368,7 @@ export class EpubReader {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
-        if (this.foliateIframeVisibleTextLength() > 3 || this.visibleDomTextLength() > 3) {
+        if (this.viewportVisibleTextLength() > 3) {
           this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
           this.refreshDocText();
           this.syncTextReadyFlag();
@@ -322,9 +376,9 @@ export class EpubReader {
           return;
         }
         tries += 1;
-        const fallbackAfter = aggressiveFallback ? 15 : 60;
+        const fallbackAfter = aggressiveFallback ? 10 : 20;
         if (tries >= fallbackAfter) this.mountPlainTextFallbackIfNeeded();
-        if (tries >= 180) {
+        if (tries >= 60) {
           this.mountPlainTextFallbackIfNeeded();
           this.syncTextReadyFlag();
           resolve();
@@ -336,11 +390,11 @@ export class EpubReader {
     });
   }
 
-  /** When foliate leaves the paginator empty (large EPUB / WebView2), show parsed spine text in-page. */
+  /** When foliate paints nothing the reader can see, show the parsed book text in-page instead. */
   private mountPlainTextFallbackIfNeeded(): void {
-    if (this.foliateIframeVisibleTextLength() > 3) return;
-    if (this.visibleDomTextLength() > 3 || !this.fixturePlainText) return;
+    if (this.iframeViewportVisibleTextLength() > 3 || !this.fixturePlainText) return;
     const { container } = this.opts;
+    if (this.view) this.view.style.display = "none";
     if (container.querySelector(".epub-fallback-text")) {
       this.contentRoot = container.querySelector(".epub-fallback-text");
       this.refreshDocText();
@@ -372,59 +426,31 @@ export class EpubReader {
     return root?.textContent?.trim().length ?? 0;
   }
 
-  private async ensureVisibleSection(
-    paginator: { goTo?: (target: { index: number }) => Promise<void>; next?: () => Promise<void> } | undefined,
-    view: FoliateView,
-    book: { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
-    startIndex: number,
-  ): Promise<void> {
-    const tryIndex = async (index: number) => {
-      if (paginator?.goTo) await paginator.goTo({ index });
-      else await view.goTo(index);
-      await new Promise((r) => window.setTimeout(r, 350));
-    };
-    const sections = book.sections ?? [];
-    const linearIndices = sections
-      .map((s, i) => (s?.linear !== "no" ? i : -1))
-      .filter((i) => i >= 0);
-    const candidates = [startIndex, ...linearIndices.filter((i) => i !== startIndex)].slice(0, 14);
-    for (const index of candidates) {
-      await tryIndex(index);
-      if (this.foliateIframeVisibleTextLength() > 3 || this.visibleDomTextLength() > 3) return;
-    }
-    for (
-      let step = 0;
-      step < 6 && this.foliateIframeVisibleTextLength() <= 3 && this.visibleDomTextLength() <= 3;
-      step++
-    ) {
-      await paginator?.next?.();
-      await new Promise((r) => window.setTimeout(r, 350));
-    }
-  }
-
-  private async findBestReadableSectionIndex(book: {
-    sections?: { linear?: string; createDocument?: () => Promise<Document> }[];
-  }): Promise<number> {
-    const sections = book.sections ?? [];
-    let bestIdx = sections.findIndex((s) => s.linear !== "no");
-    if (bestIdx < 0) bestIdx = 0;
-    let bestLen = 0;
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i];
-      if (section?.linear === "no") continue;
+  /**
+   * Open at the saved position, else at the start of the book (first body landmark or first
+   * linear section). Skip forward only past sections that paint no visible text (e.g. a cover image).
+   */
+  private async goToStart(view: FoliateView): Promise<void> {
+    const settle = () => new Promise((r) => window.setTimeout(r, 300));
+    let placed = false;
+    if (this.opts.initialCfi) {
       try {
-        if (!section?.createDocument) continue;
-        const doc = await section.createDocument();
-        const len = doc.body?.textContent?.replace(/\s+/g, " ").trim().length ?? 0;
-        if (len > bestLen) {
-          bestLen = len;
-          bestIdx = i;
-        }
+        placed = (await view.goTo(this.opts.initialCfi)) != null;
       } catch {
-        /* skip broken section */
+        placed = false;
       }
     }
-    return bestIdx;
+    if (!placed) {
+      if (view.goToTextStart) await view.goToTextStart();
+      else await view.goTo(0);
+    }
+    await settle();
+    if (placed) return;
+    const sectionCount = view.book?.sections?.length ?? 0;
+    for (let step = 0; step < Math.min(4, sectionCount) && this.iframeViewportVisibleTextLength() <= 3; step++) {
+      await view.next?.();
+      await settle();
+    }
   }
 
   private beginTextReadyWatch(): void {
@@ -527,18 +553,24 @@ export class EpubReader {
   }): Promise<void> {
     try {
       const sections = book.sections ?? [];
-      let best = "";
+      const parts: string[] = [];
+      let total = 0;
       for (const section of sections) {
+        if (total >= 200_000) break;
         if (section.linear === "no" || !section?.createDocument) continue;
         try {
           const doc = await section.createDocument();
           const plain = doc.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-          if (plain.length > best.length) best = plain;
+          if (plain) {
+            parts.push(plain);
+            total += plain.length;
+          }
         } catch {
           /* try next */
         }
       }
-      if (best.length > 3) this.fixturePlainText = best;
+      const text = parts.join("\n\n");
+      if (text.length > 3) this.fixturePlainText = text;
     } catch {
       this.fixturePlainText = null;
     }
