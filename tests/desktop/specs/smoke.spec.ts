@@ -1400,4 +1400,65 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   }).timeout(300_000);
+
+  it("S28 zvýraznění: PDF DOM + EPUB/MOBI foliate overlay, obnova po znovuotevření", async () => {
+    const result: Record<string, unknown> = {};
+    const waitPaint = async (label: string) => {
+      let count = 0;
+      await browser.waitUntil(
+        async () => {
+          count = await callSmokeApi<number>("readerHighlightPaintCount");
+          return count > 0;
+        },
+        { timeout: 30_000, interval: 300, timeoutMsg: `${label}: no highlight in DOM/overlay` },
+      );
+      return count;
+    };
+    const openHamlet = async () => {
+      await goLibrary();
+      const clicked = await browser.execute(() => {
+        const card = Array.from(document.querySelectorAll<HTMLElement>('.book-card[data-kind="mobi"]')).find((c) =>
+          /hamlet/i.test(c.textContent ?? ""),
+        );
+        card?.click();
+        return Boolean(card);
+      });
+      if (!clicked) throw new Error("Hamlet card missing in library (staged by S25)");
+      await waitEpubTextReady(120_000);
+    };
+
+    try {
+      await openPdfFromLibraryCard();
+      const pdfQuote = await callSmokeApi<{ quoteId: string }>("createPdfQuoteFromSelection");
+      const pdfPainted = await waitPaint("PDF just saved");
+      await saveScreenshot("smoke-highlight-pdf-painted.png");
+      await openPdfFromLibraryCard();
+      const pdfRestored = await waitPaint("PDF reopened");
+      await saveScreenshot("smoke-highlight-pdf-restored.png");
+      result.pdf = { quoteId: pdfQuote.quoteId, painted: pdfPainted, restored: pdfRestored };
+
+      await openEpubFromLibraryCard();
+      const epubQuote = await callSmokeApi<{ quoteId: string }>("createEpubQuoteFromSelection");
+      const epubPainted = await waitPaint("EPUB just saved");
+      await saveScreenshot("smoke-highlight-epub-painted.png");
+      await openEpubFromLibraryCard();
+      const epubRestored = await waitPaint("EPUB reopened");
+      await saveScreenshot("smoke-highlight-epub-restored.png");
+      result.epub = { quoteId: epubQuote.quoteId, painted: epubPainted, restored: epubRestored };
+
+      await openHamlet();
+      const mobiQuote = await callSmokeApi<{ quoteId: string }>("createEpubQuoteFromSelection");
+      const mobiPainted = await waitPaint("MOBI just saved");
+      await saveScreenshot("smoke-highlight-mobi-painted.png");
+      await openHamlet();
+      const mobiRestored = await waitPaint("MOBI reopened");
+      await saveScreenshot("smoke-highlight-mobi-restored.png");
+      result.mobi = { quoteId: mobiQuote.quoteId, painted: mobiPainted, restored: mobiRestored };
+
+      record("S28", "Zvýraznění PDF DOM + EPUB/MOBI overlay, obnova", true, JSON.stringify(result));
+    } catch (e) {
+      record("S28", "Zvýraznění PDF DOM + EPUB/MOBI overlay, obnova", false, `${String(e)} ${JSON.stringify(result)}`);
+      throw e;
+    }
+  }).timeout(420_000);
 });

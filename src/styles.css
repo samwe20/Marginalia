@@ -1171,7 +1171,7 @@ body.setup-modal-open .workspace {
 /* Highlights */
 mark.quote-highlight,
 .quote-highlight {
-  background: var(--highlight) !important;
+  background: var(--highlight, rgba(240, 200, 75, 0.42)) !important;
   border-radius: 3px;
   color: inherit;
 }

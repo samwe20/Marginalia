@@ -1,4 +1,5 @@
 import "foliate-js/view.js";
+import { Overlayer } from "foliate-js/overlayer.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
 import {
   collectFoliateContentDocuments,
@@ -41,17 +42,29 @@ type FoliateView = HTMLElement & {
   init?: (opts: { showTextStart?: boolean }) => Promise<void>;
   goToTextStart?: () => Promise<void>;
   goTo: (target: string | number) => Promise<unknown>;
-  getCFI: (range: Range) => string;
+  getCFI: (sectionIndex: number, range?: Range) => string;
+  addAnnotation?: (annotation: FoliateHighlightAnnotation) => Promise<unknown>;
   next?: () => Promise<void>;
   prev?: () => Promise<void>;
   book?: { sections?: unknown[] };
   renderer?: HTMLElement & {
     root?: HTMLElement;
-    getContents?: () => { index: number; doc: Document }[];
+    getContents?: () => {
+      index: number;
+      doc: Document;
+      overlayer?: { element?: SVGSVGElement };
+    }[];
     next?: () => Promise<void>;
     prev?: () => Promise<void>;
   };
 };
+
+type FoliateHighlightAnnotation = {
+  value: string;
+  color: string;
+};
+
+const HIGHLIGHT_COLOR = "#f0c84b";
 
 /** Thin wrapper around foliate-js `foliate-view` custom element. */
 export class EpubReader {
@@ -62,6 +75,7 @@ export class EpubReader {
   private docText = "";
   private fixturePlainText: string | null = null;
   private keyHandlers: { doc: Document; fn: (ev: KeyboardEvent) => void }[] = [];
+  private highlightAnnotations = new Map<string, FoliateHighlightAnnotation>();
 
   constructor(private opts: EpubReaderOptions) {}
 
@@ -98,8 +112,16 @@ export class EpubReader {
     if (!root) return false;
     const { start, end, text } = rangeToOffsets(root, range);
     if (!text.trim()) return false;
-    const cfi = view.getCFI?.(range) ?? `/0/0`;
-    const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+    const entry = this.contentEntryForRange(range);
+    let cfi = "/0/0";
+    if (entry) {
+      try {
+        cfi = view.getCFI(entry.index, range);
+      } catch {
+        /* Plain-text fallback has no EPUB range; TextQuoteSelector still restores it. */
+      }
+    }
+    const anchor = anchorFromEpubSelection(root.textContent ?? this.docText, start, end, cfi);
     void this.opts.onHighlight({ text, cfi, anchor });
     this.paintHighlight(range);
     range.startContainer.ownerDocument?.getSelection()?.removeAllRanges();
@@ -200,15 +222,72 @@ export class EpubReader {
   private offsetRootForRange(range: Range): HTMLElement | null {
     let node: Node | null = range.commonAncestorContainer;
     if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
-    if (node instanceof HTMLElement) {
-      const body = node.ownerDocument?.body;
-      if (body?.contains(node)) return body;
+    if (node?.nodeType === Node.ELEMENT_NODE) {
+      const element = node as Element;
+      const body = element.ownerDocument?.body;
+      if (body?.contains(element)) return body;
     }
     return this.contentRoot ?? this.resolveContentRoot();
   }
 
   contentDocuments(): Document[] {
     return collectFoliateContentDocuments(this.view, this.opts.container);
+  }
+
+  private contentEntryForRange(
+    range: Range,
+  ): { index: number; doc: Document; overlayer?: { element?: SVGSVGElement } } | null {
+    const doc = range.startContainer.ownerDocument;
+    return this.view?.renderer?.getContents?.().find((entry) => entry.doc === doc) ?? null;
+  }
+
+  private wireAnnotationOverlay(view: FoliateView): void {
+    view.addEventListener("draw-annotation", (event) => {
+      const detail = (event as CustomEvent<{
+        annotation: FoliateHighlightAnnotation;
+        draw: (
+          draw: (
+            rects: { left: number; top: number; width: number; height: number }[],
+            options: { color?: string },
+          ) => SVGGElement,
+          options: { color: string },
+        ) => void;
+      }>).detail;
+      if (!detail || !this.highlightAnnotations.has(detail.annotation.value)) return;
+      detail.draw(
+        (rects, options) => {
+          const group = Overlayer.highlight(rects, options);
+          group.classList.add("quote-highlight-overlay");
+          group.dataset.annotationValue = detail.annotation.value;
+          return group;
+        },
+        { color: detail.annotation.color },
+      );
+    });
+    view.addEventListener("create-overlay", () => {
+      // foliate emits this just before attaching the overlayer; resolveNavigation yields first.
+      queueMicrotask(() => void this.drawStoredAnnotations());
+    });
+  }
+
+  private async drawStoredAnnotations(): Promise<void> {
+    const view = this.view;
+    if (!view?.addAnnotation) return;
+    for (const annotation of this.highlightAnnotations.values()) {
+      try {
+        await view.addAnnotation(annotation);
+      } catch {
+        /* A malformed legacy CFI must not prevent the book from opening. */
+      }
+    }
+  }
+
+  highlightPaintCount(): number {
+    let count = this.opts.container.querySelectorAll("mark.quote-highlight").length;
+    for (const entry of this.view?.renderer?.getContents?.() ?? []) {
+      count += entry.overlayer?.element?.querySelectorAll(".quote-highlight-overlay").length ?? 0;
+    }
+    return count;
   }
 
   foliateIframeVisibleTextLength(): number {
@@ -334,6 +413,7 @@ export class EpubReader {
     container.className = "epub-root";
     container.appendChild(view);
     this.view = view;
+    this.wireAnnotationOverlay(view);
 
     await view.open(book);
     if (this.flow === "scrolled") {
@@ -593,11 +673,19 @@ export class EpubReader {
     const hit = this.firstSelectableText();
     if (!hit) return null;
     const { node, root } = hit;
-    const range = document.createRange();
+    const range = node.ownerDocument.createRange();
     range.selectNodeContents(node);
     const { start, end, text } = rangeToOffsets(root, range);
-    const cfi = this.view.getCFI?.(range) ?? "/0/0";
-    const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+    const entry = this.contentEntryForRange(range);
+    let cfi = "/0/0";
+    if (entry) {
+      try {
+        cfi = this.view.getCFI(entry.index, range);
+      } catch {
+        /* Keep TextQuoteSelector as the fallback anchor. */
+      }
+    }
+    const anchor = anchorFromEpubSelection(root.textContent ?? this.docText, start, end, cfi);
     return { text, cfi, anchor, range };
   }
 
@@ -627,37 +715,41 @@ export class EpubReader {
   }
 
   private findTextInSubtree(root: Node): { node: Text; root: HTMLElement } | null {
-    if (root instanceof HTMLIFrameElement) {
+    if (
+      root.nodeType === Node.ELEMENT_NODE &&
+      (root as Element).tagName.toLowerCase() === "iframe"
+    ) {
       try {
-        const doc = root.contentDocument;
+        const doc = (root as HTMLIFrameElement).contentDocument;
         if (doc?.body) return this.findTextInSubtree(doc.body);
       } catch {
         /* cross-origin */
       }
       return null;
     }
-    if (root instanceof HTMLElement) {
-      const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    if (root.nodeType === Node.ELEMENT_NODE) {
+      const element = root as HTMLElement;
+      const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode() as Text | null;
       while (node) {
-        if (node.textContent?.trim()) return { node, root };
+        if (node.textContent?.trim()) return { node, root: element };
         node = walker.nextNode() as Text | null;
       }
-      for (const iframe of root.querySelectorAll("iframe")) {
+      for (const iframe of element.querySelectorAll("iframe")) {
         const nested = this.findTextInSubtree(iframe);
         if (nested) return nested;
       }
-      if (root.shadowRoot) {
-        for (const child of root.shadowRoot.childNodes) {
+      if (element.shadowRoot) {
+        for (const child of element.shadowRoot.childNodes) {
           const nested = this.findTextInSubtree(child);
           if (nested) return nested;
         }
       }
-      for (const child of root.children) {
+      for (const child of element.children) {
         const nested = this.findTextInSubtree(child);
         if (nested) return nested;
       }
-    } else if (root instanceof DocumentFragment) {
+    } else if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
       for (const child of root.childNodes) {
         const nested = this.findTextInSubtree(child);
         if (nested) return nested;
@@ -667,8 +759,27 @@ export class EpubReader {
   }
 
   paintHighlight(range: Range): void {
-    const mark = document.createElement("mark");
+    const entry = this.contentEntryForRange(range);
+    if (entry && this.view?.addAnnotation) {
+      try {
+        const value = this.view.getCFI(entry.index, range);
+        const annotation = { value, color: HIGHLIGHT_COLOR };
+        this.highlightAnnotations.set(value, annotation);
+        void this.view.addAnnotation(annotation);
+        return;
+      } catch {
+        /* Fall through to a DOM mark if foliate cannot resolve this range. */
+      }
+    }
+    this.paintInlineHighlight(range);
+  }
+
+  private paintInlineHighlight(range: Range): void {
+    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
     mark.className = "quote-highlight";
+    mark.style.backgroundColor = HIGHLIGHT_COLOR;
+    mark.style.borderRadius = "3px";
+    mark.style.color = "inherit";
     try {
       range.surroundContents(mark);
     } catch {
@@ -686,21 +797,31 @@ export class EpubReader {
   async restoreHighlights(
     quotes: { anchor: ReturnType<typeof anchorFromEpubSelection> }[],
   ): Promise<void> {
-    if (!this.contentRoot || !this.view) return;
-    this.refreshDocText();
+    if (!this.view) return;
+    this.highlightAnnotations.clear();
+    const fallback = this.opts.container.querySelector<HTMLElement>(".epub-fallback-text");
+    if (fallback) {
+      const text = fallback.textContent ?? "";
+      for (const q of quotes) {
+        const located = reanchorInText(text, q.anchor);
+        if (!located) continue;
+        const range = this.offsetsToRange(fallback, located.start, located.end);
+        if (range) this.paintInlineHighlight(range);
+      }
+      return;
+    }
     for (const q of quotes) {
       const cfi = getEpubCfi(q.anchor);
-      if (cfi) await this.view.goTo(cfi);
-      const located = reanchorInText(this.docText, q.anchor);
-      if (!located) continue;
-      const range = this.offsetsToRange(located.start, located.end);
-      if (range) this.paintHighlight(range);
+      if (cfi?.startsWith("epubcfi(")) {
+        this.highlightAnnotations.set(cfi, { value: cfi, color: HIGHLIGHT_COLOR });
+      }
     }
+    await this.drawStoredAnnotations();
   }
 
-  private offsetsToRange(start: number, end: number): Range | null {
-    if (!this.contentRoot) return null;
-    const walker = document.createTreeWalker(this.contentRoot, NodeFilter.SHOW_TEXT);
+  private offsetsToRange(root: HTMLElement, start: number, end: number): Range | null {
+    const doc = root.ownerDocument;
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let offset = 0;
     let startNode: Text | null = null;
     let endNode: Text | null = null;
@@ -721,7 +842,7 @@ export class EpubReader {
       offset = next;
     }
     if (!startNode || !endNode) return null;
-    const range = document.createRange();
+    const range = doc.createRange();
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
     return range;
@@ -736,6 +857,7 @@ export class EpubReader {
     this.view?.remove();
     this.view = null;
     this.contentRoot = null;
+    this.highlightAnnotations.clear();
     this.opts.container.dataset.epubTextReady = "0";
   }
 }

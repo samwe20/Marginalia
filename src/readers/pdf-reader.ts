@@ -141,8 +141,11 @@ export class PdfReader {
   }
 
   paintHighlight(_layer: HTMLElement, range: Range): void {
-    const mark = document.createElement("mark");
+    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
     mark.className = "quote-highlight";
+    mark.style.backgroundColor = "#f0c84b";
+    mark.style.borderRadius = "3px";
+    mark.style.color = "inherit";
     try {
       range.surroundContents(mark);
     } catch {
@@ -150,6 +153,10 @@ export class PdfReader {
       mark.appendChild(text);
       range.insertNode(mark);
     }
+  }
+
+  highlightPaintCount(): number {
+    return this.opts.container.querySelectorAll("mark.quote-highlight").length;
   }
 
   async restoreHighlights(

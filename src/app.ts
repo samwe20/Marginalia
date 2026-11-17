@@ -1204,6 +1204,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       await refreshInspectorAfterQuoteSave(state.slug);
       return { quoteId: saved.doc.meta.id, text: draft.text.trim(), slug: state.slug };
     },
+    readerHighlightPaintCount: () =>
+      pdf?.highlightPaintCount() ?? epub?.highlightPaintCount() ?? 0,
     epubReaderReady: () => (epub?.visibleDomTextLength() ?? 0) > 3,
     epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
     epubViewportVisibleTextLength: () => epub?.viewportVisibleTextLength() ?? 0,

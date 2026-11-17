@@ -6,6 +6,8 @@ export type SmokeTestApi = {
   dropBookFromPath: (libraryRoot: string, filePath: string) => Promise<void>;
   createPdfQuoteFromSelection: () => Promise<SmokeQuoteResult>;
   createEpubQuoteFromSelection: () => Promise<SmokeQuoteResult>;
+  /** Actual painted marks in the PDF DOM or foliate SVG overlayer, not stored quote count. */
+  readerHighlightPaintCount: () => number;
   epubReaderReady: () => boolean;
   epubVisibleTextLength: () => number;
   /** Characters whose rendered boxes intersect the window (not just present in the DOM). */
