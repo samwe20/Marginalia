@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-library-path"
+description = "Allow extending FS scope to the user library folder."
+commands.allow = ["allow_library_path"]

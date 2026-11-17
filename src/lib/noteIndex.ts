@@ -1,0 +1,207 @@
+import type { NoteMeta, WikiTarget } from "../types/folio";
+import { markdownLanguage } from "@codemirror/lang-markdown";
+
+const WIKI_RE = /\[\[([^\]|#<>"&\n]+)(?:\|([^\]<>"&\n]+))?\]\]/g;
+
+/** Strip fenced/inline code so example [[links]] inside code are ignored. */
+export function stripCodeForLinks(text: string): string {
+  const masked = text.split("");
+  markdownLanguage.parser.parse(text).iterate({ enter(node) {
+    if (/^(FencedCode|CodeBlock|InlineCode|HTMLBlock|HTMLTag)$/.test(node.name)) {
+      masked.fill(" ", node.from, node.to);
+      return false;
+    }
+  } });
+  return masked.join("");
+}
+
+export function parseWikiTargets(text: string): WikiTarget[] {
+  const out: WikiTarget[] = [];
+  const scan = stripCodeForLinks(text);
+  for (const match of scan.matchAll(WIKI_RE)) {
+    const title = match[1]?.trim();
+    if (!title) continue;
+    out.push({
+      raw: match[0],
+      title,
+      alias: match[2]?.trim(),
+    });
+  }
+  return out;
+}
+
+export function normalizeTitle(title: string): string {
+  return title.trim().replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+}
+
+export class NoteIndex {
+  private notes: NoteMeta[] = [];
+  private byId = new Map<string, NoteMeta>();
+  private byTitle = new Map<string, NoteMeta>();
+  private content = new Map<string, string>();
+  private outgoing = new Map<string, Set<string>>();
+  private incoming = new Map<string, Set<string>>();
+
+  setNotes(notes: NoteMeta[]) {
+    this.notes = notes;
+    this.byId.clear();
+    this.byTitle.clear();
+    this.content.clear();
+    this.outgoing.clear();
+    this.incoming.clear();
+    for (const note of notes) {
+      this.byId.set(note.id, note);
+      this.byTitle.set(normalizeTitle(note.title), note);
+      this.byTitle.set(normalizeTitle(note.relativePath), note);
+    }
+  }
+
+  getNotes() {
+    return this.notes;
+  }
+
+  getNoteByPath(path: string) {
+    return this.notes.find((n) => n.path === path) ?? null;
+  }
+
+  resolve(title: string): NoteMeta | null {
+    const key = normalizeTitle(title);
+    return this.byTitle.get(key) ?? this.byId.get(key) ?? null;
+  }
+
+  /** Extra wiki titles → entry (Marginália: quote aliases, book titles). */
+  registerAlias(title: string, note: NoteMeta): void {
+    this.byTitle.set(normalizeTitle(title), note);
+  }
+
+  setContent(path: string, text: string) {
+    const note = this.getNoteByPath(path);
+    if (!note) return;
+    this.content.set(note.id, text);
+    this.recomputeLinksFor(note.id, text);
+  }
+
+  removeNote(path: string) {
+    const note = this.getNoteByPath(path);
+    if (!note) return;
+    this.content.delete(note.id);
+    this.outgoing.delete(note.id);
+    for (const [, set] of this.incoming) set.delete(note.id);
+    this.incoming.delete(note.id);
+  }
+
+  private recomputeLinksFor(noteId: string, text: string) {
+    const prev = this.outgoing.get(noteId) ?? new Set();
+    for (const target of prev) {
+      this.incoming.get(target)?.delete(noteId);
+    }
+
+    const next = new Set<string>();
+    for (const link of parseWikiTargets(text)) {
+      const targetId = normalizeTitle(link.title);
+      next.add(targetId);
+      if (!this.incoming.has(targetId)) this.incoming.set(targetId, new Set());
+      this.incoming.get(targetId)!.add(noteId);
+    }
+    this.outgoing.set(noteId, next);
+  }
+
+  getBacklinks(path: string): NoteMeta[] {
+    const note = this.getNoteByPath(path);
+    if (!note) return [];
+    const keys = new Set([note.id, normalizeTitle(note.title), normalizeTitle(note.relativePath)]);
+    const ids = new Set<string>();
+    for (const key of keys) {
+      for (const id of this.incoming.get(key) ?? []) ids.add(id);
+    }
+    return [...ids]
+      .map((id) => this.byId.get(id))
+      .filter((n): n is NoteMeta => Boolean(n))
+      .sort((a, b) => a.title.localeCompare(b.title, "cs"));
+  }
+
+  getOutgoing(path: string): { title: string; note: NoteMeta | null }[] {
+    const note = this.getNoteByPath(path);
+    if (!note) return [];
+    const text = this.content.get(note.id) ?? "";
+    const seen = new Set<string>();
+    const out: { title: string; note: NoteMeta | null }[] = [];
+    for (const link of parseWikiTargets(text)) {
+      const key = normalizeTitle(link.title);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ title: link.title, note: this.resolve(link.title) });
+    }
+    return out;
+  }
+
+  search(query: string, limit = 12): NoteMeta[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return this.notes.slice(0, limit);
+    return this.notes
+      .filter((n) => n.title.toLowerCase().includes(q) || n.relativePath.toLowerCase().includes(q))
+      .slice(0, limit);
+  }
+
+  suggestTitles(query: string, limit = 12): string[] {
+    const q = query.trim().toLowerCase();
+    const titles = this.notes.map((n) => n.title);
+    if (!q) return titles.slice(0, limit);
+    return titles.filter((t) => t.toLowerCase().includes(q)).slice(0, limit);
+  }
+
+  /** Edges for SQLite persistence (Marginália extension). */
+  exportLinkRows(): Array<{
+    source_path: string;
+    source_kind: string;
+    target_path: string | null;
+    raw_title: string;
+    snippet: string;
+  }> {
+    const rows: Array<{
+      source_path: string;
+      source_kind: string;
+      target_path: string | null;
+      raw_title: string;
+      snippet: string;
+    }> = [];
+    for (const note of this.notes) {
+      const text = this.content.get(note.id) ?? "";
+      const kind = note.kind ?? "note";
+      for (const link of parseWikiTargets(text)) {
+        const target = this.resolve(link.title);
+        const idx = text.indexOf(link.raw);
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(text.length, idx + link.raw.length + 40);
+        let snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+        if (start > 0) snippet = `…${snippet}`;
+        if (end < text.length) snippet = `${snippet}…`;
+        rows.push({
+          source_path: note.path,
+          source_kind: kind,
+          target_path: target?.path ?? null,
+          raw_title: link.title,
+          snippet,
+        });
+      }
+    }
+    return rows;
+  }
+
+  snippetForBacklink(sourceId: string, targetTitle: string): string {
+    const text = this.content.get(sourceId) ?? "";
+    for (const link of parseWikiTargets(text)) {
+      if (link.title === targetTitle || normalizeTitle(link.title) === normalizeTitle(targetTitle)) {
+        const idx = text.indexOf(link.raw);
+        if (idx < 0) return link.raw;
+        const start = Math.max(0, idx - 36);
+        const end = Math.min(text.length, idx + link.raw.length + 36);
+        let s = text.slice(start, end).replace(/\s+/g, " ").trim();
+        if (start > 0) s = `…${s}`;
+        if (end < text.length) s = `${s}…`;
+        return s;
+      }
+    }
+    return "";
+  }
+}

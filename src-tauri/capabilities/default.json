@@ -1,0 +1,37 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-library-path",
+    "marginalia-index",
+    "smoke-commands",
+    "dialog:default",
+    "dialog:allow-open",
+    "store:default",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-mkdir",
+    "fs:allow-read-dir",
+    "fs:allow-exists",
+    "fs:allow-stat",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-applocaldata-read-recursive",
+    "fs:allow-applocaldata-write-recursive",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" },
+        { "path": "$APPCONFIG/**" },
+        { "path": "$TEMP/**" }
+      ]
+    }
+  ]
+}
