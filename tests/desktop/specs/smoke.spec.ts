@@ -163,7 +163,11 @@ async function pointerSelectPdfText(): Promise<void> {
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
-async function enterFoliateContentFrame(): Promise<{ iframeCount: number; picked: number } | null> {
+async function pickFoliateContentIframe(): Promise<{
+  ifr: WebdriverIO.Element;
+  iframeCount: number;
+  picked: number;
+} | null> {
   const host = await $("#epub-root foliate-view");
   if (!(await host.isExisting())) return null;
   let iframes: WebdriverIO.Element[] = [];
@@ -191,14 +195,19 @@ async function enterFoliateContentFrame(): Promise<{ iframeCount: number; picked
     const len = (await browser.execute(function () {
       return document.body?.textContent?.replace(/\s+/g, " ").trim().length ?? 0;
     })) as number;
-    await browser.switchToParentFrame();
+    await browser.switchToFrame(null);
     if (len > bestLen) {
       bestLen = len;
       bestIdx = i;
     }
   }
-  await browser.switchToFrame(iframes[bestIdx]);
-  return { iframeCount: iframes.length, picked: bestIdx };
+  return { ifr: iframes[bestIdx], iframeCount: iframes.length, picked: bestIdx };
+}
+
+function epubContentSelectionOk(diag: Record<string, unknown>): boolean {
+  const sel = diag.selection as { selections?: { length: number }[] } | undefined;
+  const contentLen = sel?.selections?.reduce((n, s) => n + (s.length ?? 0), 0) ?? 0;
+  return contentLen >= 3 || diag.highlighterPending === true;
 }
 
 function safeDiagStage(stage: string): string {
@@ -230,60 +239,33 @@ async function dumpEpubPointerFailure(stage: string, extra?: Record<string, unkn
   throw new Error(`EPUB/MOBI pointer/H (${stage}): ${JSON.stringify({ extra, diag })}`);
 }
 
-async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
-  await browser.execute(function () {
-    const block = document.querySelector("p, span") ?? document.body;
-    block?.scrollIntoView({ block: "center", inline: "nearest" });
-  });
-  await browser.pause(250);
-  const block = (await $("p, span")) as WebdriverIO.Element;
-  await block.waitForExist({ timeout: 8_000 });
-  const preview = (await browser.execute(function () {
-    const p = document.querySelector("p, span");
-    return p?.textContent?.trim().slice(0, 80) ?? "";
-  })) as string;
+/** W3C: pointer origin = iframe element maps into content document (no switchToFrame). */
+async function dragSelectViaFoliateIframeElement(ifr: WebdriverIO.Element): Promise<Record<string, unknown>> {
+  const size = await ifr.getSize();
+  const w = size.width;
+  const h = size.height;
+  if (w < 8 || h < 4) throw new Error(`foliate iframe element too small: ${w}x${h}`);
+  const y = Math.max(1, Math.floor(h / 2));
+  const x1 = 4;
+  const x2 = Math.min(w - 4, Math.max(x1 + 8, w - 4));
   let last: Record<string, unknown> = {};
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const size = await block.getSize();
-    const loc = await block.getLocation();
-    const w = size.width;
-    const h = size.height;
-    if (w < 8 || h < 4) throw new Error(`foliate text block too small: ${w}x${h}`);
-    const y = Math.max(1, Math.floor(h / 2));
-    const x1 = 2;
-    const x2 = Math.min(w - 2, Math.max(x1 + 6, w - 2));
-    const mode = attempt % 3;
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      if (mode === 0) await pointerDragOnElement(block, x1, y, x2, y, 420);
-      else if (mode === 1) await pointerDragOnElementSteps(block, x1, y, x2, y);
-      else {
-        const vx1 = loc.x + x1;
-        const vy = loc.y + y;
-        const vx2 = loc.x + x2;
-        await pointerDragViewport(vx1, vy, vx2, vy, 520);
-      }
+      if (attempt % 2 === 0) await pointerDragOnElement(ifr, x1, y, x2, y, 480);
+      else await pointerDragOnElementSteps(ifr, x1, y, x2, y);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("out of bounds") && attempt < 5) {
+      if (msg.includes("out of bounds") && attempt < 3) {
         await browser.pause(250);
         continue;
       }
       throw e;
     }
-    await browser.pause(120);
-    const inFrameSelection = (await browser.execute(function () {
-      const t = window.getSelection()?.toString().trim() ?? "";
-      const api = (window.top ?? window).__MARGINALIA_SMOKE_API__ as
-        | { epubSelectionDiagnostics?: () => { highlighterPending?: boolean } }
-        | undefined;
-      const highlighterPending = api?.epubSelectionDiagnostics?.()?.highlighterPending === true;
-      return { length: t.length, preview: t.slice(0, 160), highlighterPending };
-    })) as { length: number; preview: string; highlighterPending?: boolean };
-    last = { attempt, preview, drag: { x1, y1: y, x2, y2: y, w, h }, inFrameSelection };
-    if (inFrameSelection.length >= 3 || inFrameSelection.highlighterPending) {
-      return last;
-    }
-    await browser.pause(300);
+    await browser.pause(150);
+    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    last = { attempt, drag: { x1, y1: y, x2, y2: y, w, h }, diagnostics: diag };
+    if (epubContentSelectionOk(diag)) return last;
+    await browser.pause(250);
   }
   return last;
 }
@@ -300,25 +282,20 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
-  const frameMeta = await enterFoliateContentFrame();
-  if (!frameMeta) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
+  const picked = await pickFoliateContentIframe();
+  if (!picked) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
+  const { ifr, iframeCount, picked: pickedIndex } = picked;
+  const iframeMeta = { iframeCount, picked: pickedIndex };
   let frameDrag: Record<string, unknown>;
   try {
-    frameDrag = await dragSelectInCurrentFrame();
-    frameDrag.iframeMeta = frameMeta;
+    frameDrag = await dragSelectViaFoliateIframeElement(ifr);
+    frameDrag.iframeMeta = iframeMeta;
   } catch (e) {
-    await browser.switchToFrame(null);
     const err = e instanceof Error ? e.message : String(e);
-    return dumpEpubPointerFailure("shadow-drag-error", { err, frameMeta });
+    return dumpEpubPointerFailure("shadow-drag-error", { err, iframeMeta });
   }
-  const inFrame = frameDrag.inFrameSelection as {
-    length: number;
-    preview: string;
-    highlighterPending?: boolean;
-  };
-  const hasPending = inFrame?.highlighterPending === true;
-  if ((inFrame?.length ?? 0) < 3 && !hasPending) {
-    await browser.switchToFrame(null);
+  let diag = frameDrag.diagnostics as Record<string, unknown>;
+  if (!epubContentSelectionOk(diag)) {
     const rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
       "epubPointerSelectionRect",
     );
@@ -328,35 +305,29 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
       })) as { width: number; height: number };
       const clamped = clampTopViewport(rect, inner);
       await pointerDragViewport(clamped.x, clamped.y, clamped.x2, clamped.y2, 500);
-      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-      const sel = diag.selection as { selections: { length: number }[] };
-      const contentLen = sel.selections?.reduce((n, s) => n + (s.length ?? 0), 0) ?? 0;
-      if (contentLen >= 3 || diag.highlighterPending === true) {
+      diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      if (epubContentSelectionOk(diag)) {
         return {
           space: "foliate-top-viewport-drag",
-          stayInFrame: false,
-          frameMeta,
+          frameMeta: iframeMeta,
           frameDrag,
-          topViewportDrag: rect,
+          topViewportDrag: clamped,
           selectionAfterDrag: diag,
           renderInfo,
         };
       }
     }
-    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-    return dumpEpubPointerFailure("after-shadow-drag-no-selection", { inFrame, frameDrag, diag });
+    return dumpEpubPointerFailure("after-shadow-drag-no-selection", { frameDrag, diag });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
   );
-  // Stay in content iframe until S15/S19 press H (switchToFrame(null) clears book selection).
   return {
-    space: "foliate-shadow-iframe",
-    stayInFrame: true,
-    frameMeta,
+    space: "foliate-shadow-iframe-origin",
+    frameMeta: iframeMeta,
     frameDrag,
     viewport,
-    selectionAfterDrag: { inFrame },
+    selectionAfterDrag: diag,
     renderInfo,
   };
 }
