@@ -156,6 +156,50 @@ jobs:
           name: desktop-smoke-${{ needs.windows-build.outputs.short_sha }}
           path: test-results/desktop-smoke
           if-no-files-found: warn
+  # Large-library stress against the installed NSIS app. Needs windows-build only —
+  # does NOT gate windows-pr-test-release / windows-develop-release.
+  windows-installed-stress:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    needs: windows-build
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.windows-build.outputs.installer_artifact }}
+          path: installer
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - name: Install tauri-driver
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - run: npm ci
+      - name: Installed NSIS app — WebdriverIO stress library
+        shell: pwsh
+        env:
+          INSTALLER_PATH: installer/${{ needs.windows-build.outputs.installer_file }}
+        run: |
+          winget install --id gerardog.gsudo --exact --version 2.6.1 --source winget --installer-type wix --silent --accept-package-agreements --accept-source-agreements
+          $gsudo = "$env:ProgramFiles\gsudo\Current\gsudo.exe"
+          if (-not (Test-Path $gsudo)) { throw "gsudo not found at $gsudo" }
+          $stress = Join-Path $env:GITHUB_WORKSPACE "scripts/ci/windows-installed-stress.ps1"
+          & $gsudo --direct --integrity Medium pwsh -NoProfile -ExecutionPolicy Bypass -File $stress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: desktop-stress-${{ needs.windows-build.outputs.short_sha }}
+          path: test-results/desktop-stress
+          if-no-files-found: warn
   windows-pr-test-release:
     # Jan: publish an exe only from the all-PR integration branch after installed smoke is green.
     if: github.event_name == 'pull_request' && github.head_ref == 'cursor/integration-all-d744'

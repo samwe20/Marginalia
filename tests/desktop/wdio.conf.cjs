@@ -36,7 +36,8 @@ async function disarmMissingWdioPluginBridge(browser) {
 
 exports.config = {
   runner: "local",
-  specs: [path.join(__dirname, "specs/**/*.spec.ts")],
+  // Smoke only — stress suite uses wdio.stress.conf.cjs (specs/stress.spec.ts).
+  specs: [path.join(__dirname, "specs/smoke.spec.ts")],
   maxInstances: 1,
   capabilities: [
     {

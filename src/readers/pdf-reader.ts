@@ -120,6 +120,14 @@ export class PdfReader {
     return this.pdf?.numPages ?? 0;
   }
 
+  /** Scroll reader surface so the given 0-based page is in view (backlink → citation). */
+  scrollToPageIndex(pageIndex: number): void {
+    const page = this.opts.container.querySelector(
+      `.pdf-page[data-page-index="${pageIndex}"]`,
+    ) as HTMLElement | null;
+    page?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
   /** Smoke / recovery: first non-empty text span on any page. */
   quoteDraftFromFirstText(): {
     text: string;
@@ -258,6 +266,20 @@ export class PdfReader {
 
   highlightPaintCount(): number {
     return this.opts.container.querySelectorAll("mark.quote-highlight, .quote-highlight--rect").length;
+  }
+
+  /** Remove painted highlights (before re-restore after delete/undo). */
+  clearHighlights(): void {
+    this.opts.container.querySelectorAll("mark.quote-highlight").forEach((el) => {
+      const parent = el.parentNode;
+      if (!parent) return;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      el.remove();
+      parent.normalize();
+    });
+    this.opts.container.querySelectorAll(".quote-highlight-overlay-root, .quote-highlight--rect").forEach((el) => {
+      el.remove();
+    });
   }
 
   async restoreHighlights(

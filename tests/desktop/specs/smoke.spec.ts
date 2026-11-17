@@ -2172,4 +2172,200 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     }
   }).timeout(180_000);
 
+  it("S40 backlink citace: čitelný náhled, žádné ULID, klik otevře reader", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      let files = await quoteFilesOnDisk(slug);
+      if (!files.length) {
+        await pointerSelectPdfText();
+        await pressHighlightSaveKey();
+        await browser.waitUntil(async () => (await quoteFilesOnDisk(slug)).length > 0, { timeout: 20_000 });
+      }
+      const noteTitle = `BacklinkTarget-${Date.now().toString(36)}`;
+      await $('[data-route="notes"]').click();
+      await browser.pause(400);
+      await $("#btn-new-note").click();
+      await browser.pause(400);
+      const titleInput = await $(".note-title-input, #note-title");
+      await titleInput.click();
+      await browser.keys(["Control", "a"]);
+      await browser.keys(noteTitle.split(""));
+      await browser.keys(["Enter"]);
+      await browser.pause(600);
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const ta = await $("textarea[data-quote-comment]");
+      await ta.click();
+      await browser.keys(`[[${noteTitle}]] o tomto mluvil.`.split(""));
+      await browser.keys(["Tab"]);
+      await browser.pause(900);
+      await $('[data-route="notes"]').click();
+      await browser.pause(500);
+      await browser.execute((title) => {
+        const btn = Array.from(document.querySelectorAll<HTMLButtonElement>(".note-list-item")).find(
+          (el) => (el.textContent || "").includes(title),
+        );
+        btn?.click();
+      }, noteTitle);
+      await browser.pause(700);
+      const bl = await $("#panel-backlinks-list");
+      await expect(bl).toBeDisplayed();
+      const blText = await bl.getText();
+      if (/[0-9A-HJKMNP-TV-Z]{26}/.test(blText)) {
+        throw new Error(`ULID leaked into backlinks: ${blText}`);
+      }
+      const link = await bl.$(".link-item--quote, .link-item[data-link-kind='quote'], .link-item");
+      await expect(link).toBeDisplayed();
+      await link.click();
+      await browser.pause(1200);
+      const onReader = await browser.execute(() => document.body.classList.contains("reading-mode") || Boolean(document.querySelector("#pdf-root, #epub-root")));
+      if (!onReader) throw new Error("quote backlink did not open reader");
+      await ensureInspectorOpen();
+      const quoteVisible = await $("#inspector-body .quote-card__text");
+      await expect(quoteVisible).toBeDisplayed();
+      record("S40", "Quote backlink readable + open reader", true, blText.slice(0, 120));
+    } catch (e) {
+      record("S40", "Quote backlink readable + open reader", false, String(e));
+      throw e;
+    }
+  }).timeout(240_000);
+
+  it("S41 dedupe: změna bibliografie + rescan + restart nezdvojí knihu", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await callSmokeApi("openBibliographyPanel");
+      const uniqueTitle = `Smoke Dedupe Title ${Date.now().toString(36)}`;
+      await callSmokeApi("setBibliographyField", "title", uniqueTitle);
+      await browser.pause(800);
+      await $('[data-route="library"]').click();
+      await browser.pause(600);
+      await callSmokeApi("rescanBooksFromFolder");
+      await browser.pause(800);
+      await openPdfFromLibraryCard();
+      await browser.pause(500);
+      await $('[data-route="library"]').click();
+      await browser.pause(600);
+      await reloadAppSession();
+      await $('[data-route="library"]').click();
+      await browser.pause(800);
+      const counts = await browser.execute((title) => {
+        const cards = Array.from(document.querySelectorAll<HTMLElement>(".book-card:not(.book-card--demo)"));
+        const match = cards.filter((c) => (c.dataset.title || c.textContent || "").includes(title));
+        return { match: match.length, total: cards.length };
+      }, uniqueTitle);
+      if (counts.match !== 1) throw new Error(`expected 1 card for retitled book, got ${JSON.stringify(counts)}`);
+      const summary = await callSmokeApi<{ duplicateShaCount: number }>("libraryStressSummary");
+      if (summary.duplicateShaCount > 0) throw new Error(`duplicate sha after bib rename: ${JSON.stringify(summary)}`);
+      record("S41", "Bibliography rename does not duplicate book", true, JSON.stringify(counts));
+    } catch (e) {
+      record("S41", "Bibliography rename does not duplicate book", false, String(e));
+      throw e;
+    }
+  }).timeout(300_000);
+
+  it("S42 smazání citace + undo (perzistence po restartu)", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      // Create two quotes: one for undo+restart, one for permanent delete+restart
+      while ((await quoteFilesOnDisk(slug)).length < 2) {
+        await pointerSelectPdfText();
+        await pressHighlightSaveKey();
+        await browser.pause(600);
+      }
+      const files = await quoteFilesOnDisk(slug);
+      const keepId = files[0]!.replace(/\.md$/i, "").split(/[/\\]/).pop()!;
+      const dropId = files[1]!.replace(/\.md$/i, "").split(/[/\\]/).pop()!;
+
+      await ensureInspectorOpen();
+      await browser.execute((id) => {
+        const btn = document.querySelector<HTMLButtonElement>(`[data-delete-quote="${id}"]`);
+        if (!btn) throw new Error("delete button missing");
+        btn.style.opacity = "1";
+        btn.style.pointerEvents = "auto";
+        btn.click();
+      }, keepId);
+      await browser.pause(700);
+      const undo = await $(".toast__action");
+      await expect(undo).toBeDisplayed();
+      await undo.click();
+      await browser.pause(900);
+      if (!(await quoteFilesOnDisk(slug)).some((f) => f.includes(keepId))) {
+        throw new Error("quote missing after undo");
+      }
+
+      await ensureInspectorOpen();
+      await browser.execute((id) => {
+        const btn = document.querySelector<HTMLButtonElement>(`[data-delete-quote="${id}"]`);
+        if (!btn) throw new Error("delete button missing for permanent delete");
+        btn.style.opacity = "1";
+        btn.style.pointerEvents = "auto";
+        btn.click();
+      }, dropId);
+      await browser.pause(700);
+      await browser.execute(() => {
+        document.querySelectorAll(".toast").forEach((t) => t.remove());
+      });
+
+      await reloadAppSession();
+      const afterRestart = await quoteFilesOnDisk(slug);
+      if (!afterRestart.some((f) => f.includes(keepId))) throw new Error("undone quote missing after restart");
+      if (afterRestart.some((f) => f.includes(dropId))) throw new Error("deleted quote returned after restart");
+      record("S42", "Delete quote + undo persists restart", true, `${keepId}/${dropId}`);
+    } catch (e) {
+      record("S42", "Delete quote + undo persists restart", false, String(e));
+      throw e;
+    }
+  }).timeout(300_000);
+
+  it("S43 Citace: rozbalitelné filtry kniha/autor/datum + vymazat", async () => {
+    try {
+      await $('[data-route="quotes"]').click();
+      await browser.waitUntil(async () => Boolean(await $("#quotes-filter").isExisting()), { timeout: 15_000 });
+      const toggle = await $("#quotes-filters-toggle");
+      await expect(toggle).toBeDisplayed();
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      await toggle.click();
+      await browser.pause(300);
+      expect(await toggle.getAttribute("aria-expanded")).toBe("true");
+      const panel = await $("#quotes-filters-panel");
+      await expect(panel).toBeDisplayed();
+      const bookCb = await panel.$("input[data-filter-book]");
+      if (await bookCb.isExisting()) {
+        await bookCb.click();
+        await browser.pause(400);
+      }
+      const countBeforeClear = await $(".results-count").getText();
+      const today = await panel.$('[data-date-preset="today"]');
+      await today.click();
+      await browser.pause(300);
+      const authorCb = await panel.$("input[data-filter-author]");
+      if (await authorCb.isExisting()) {
+        await authorCb.click();
+        await browser.pause(300);
+      }
+      const badge = await $("#quotes-filters-count");
+      await expect(badge).toBeDisplayed();
+      const clear = await $("#quotes-filters-clear");
+      await expect(clear).toBeDisplayed();
+      await clear.click();
+      await browser.pause(400);
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      const filterInput = await $("#quotes-filter");
+      await filterInput.setValue("a");
+      await browser.pause(400);
+      const searching = await $(".results-count").getText();
+      if (!searching.includes("/")) {
+        // still ok if all match
+      }
+      record("S43", "Quotes expandable filters", true, `${countBeforeClear} | ${searching}`);
+    } catch (e) {
+      record("S43", "Quotes expandable filters", false, String(e));
+      throw e;
+    }
+  }).timeout(180_000);
+
 });

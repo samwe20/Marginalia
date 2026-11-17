@@ -682,6 +682,134 @@ body.setup-modal-open .workspace {
   margin: 1rem 0 0.75rem;
 }
 
+.quotes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.85rem 0 0.5rem;
+}
+
+.quotes-toolbar .page-search {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
+.quotes-filters-toggle,
+.quotes-filters-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 36px;
+  padding: 0 0.7rem;
+}
+
+.quotes-filters-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.quotes-filters-chevron {
+  display: inline-grid;
+  transition: transform 140ms ease;
+}
+
+.quotes-filters-toggle[aria-expanded="true"] .quotes-filters-chevron {
+  transform: rotate(90deg);
+}
+
+.quotes-filters-panel {
+  margin: 0 0 0.85rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+}
+
+.quotes-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.9rem 1.1rem;
+}
+
+.quotes-filter-field {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.quotes-filter-field legend {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ink-soft);
+  margin-bottom: 0.35rem;
+}
+
+.quotes-filter-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 9.5rem;
+  overflow: auto;
+}
+
+.quotes-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.quotes-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.field--compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.field--compact input[type="date"] {
+  height: 32px;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: var(--ink);
+}
+
+.quotes-date-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.quotes-filter-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.84rem;
+  align-self: end;
+  cursor: pointer;
+}
+
 .field--inline {
   min-width: 12rem;
   flex: 1;
@@ -1090,6 +1218,42 @@ body.setup-modal-open .workspace {
   margin-bottom: 0.2rem;
 }
 
+.quote-card__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex: 0 0 auto;
+}
+
+.quote-card__delete {
+  opacity: 0;
+  pointer-events: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.quote-card:hover .quote-card__delete,
+.quote-card:focus-within .quote-card__delete,
+.quote-card__delete:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.quote-card__delete:hover,
+.quote-card__delete:focus-visible {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
 .quote-card__page {
   font-size: 0.68rem;
   color: var(--faint);
@@ -1357,6 +1521,9 @@ mark.quote-highlight,
 
 .toast {
   pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   padding: 0.75rem 1rem;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
@@ -1364,6 +1531,24 @@ mark.quote-highlight,
   box-shadow: var(--shadow);
   max-width: 360px;
   font-size: 0.82rem;
+}
+
+.toast__action {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0.15rem 0.25rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.toast__action:hover,
+.toast__action:focus-visible {
+  color: var(--ink);
 }
 
 .toast--error {

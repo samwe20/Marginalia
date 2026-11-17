@@ -21,7 +21,9 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:build:windows": "tauri build --target x86_64-pc-windows-msvc",
-    "test:desktop-smoke": "wdio run tests/desktop/wdio.conf.cjs"
+    "test:desktop-smoke": "wdio run tests/desktop/wdio.conf.cjs",
+    "test:desktop-stress": "wdio run tests/desktop/wdio.stress.conf.cjs",
+    "generate:stress-library": "node scripts/ci/generate-stress-library.mjs"
   },
   "dependencies": {
     "@citation-js/core": "^0.7.18",

@@ -339,6 +339,17 @@ export class EpubReader {
     return this.opts.flow ?? loadReaderFlow();
   }
 
+  /** Jump to a saved EPUB CFI (backlink → citation). */
+  async goToCfi(cfi: string): Promise<void> {
+    const view = this.view;
+    if (!view || !cfi.trim()) return;
+    try {
+      await view.goTo(cfi);
+    } catch {
+      /* CFI may be stale after reflow — highlight restore still paints when possible */
+    }
+  }
+
   /** Reader toolbar buttons: turn the page when paginated, jump a chapter when scrolled. */
   async navigateNext(): Promise<void> {
     if (this.flow === "scrolled") await this.goToSectionOffset(1);
@@ -950,11 +961,24 @@ export class EpubReader {
     this.refreshDocText();
   }
 
+  clearHighlights(): void {
+    this.highlightAnnotations.clear();
+    this.opts.container.querySelectorAll("mark.quote-highlight").forEach((el) => {
+      const parent = el.parentNode;
+      if (!parent) return;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      el.remove();
+      parent.normalize();
+    });
+    this.opts.container.querySelectorAll(".quote-highlight-overlay").forEach((el) => el.remove());
+    void this.drawStoredAnnotations();
+  }
+
   async restoreHighlights(
     quotes: { anchor: ReturnType<typeof anchorFromEpubSelection> }[],
   ): Promise<void> {
     if (!this.view) return;
-    this.highlightAnnotations.clear();
+    this.clearHighlights();
     const fallback = this.opts.container.querySelector<HTMLElement>(".epub-fallback-text");
     if (fallback) {
       const text = fallback.textContent ?? "";

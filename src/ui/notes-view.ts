@@ -1,6 +1,6 @@
 import { createMarginaliaEditor } from "../editor/marginaliaEditor";
 import type { NoteIndex } from "../lib/noteIndex";
-import { getDemoNotes, isDemoEnabled } from "../lib/demo-data";
+import { getDemoNotes, getDemoQuote, isDemoEnabled } from "../lib/demo-data";
 import { listNotes, saveNote, createNote, renameNote, DEFAULT_NOTE_TITLE, type LibraryNote } from "../lib/notes";
 import { escapeHtml } from "../lib/html";
 import { renderFolioBacklinksPanel } from "./folio-backlinks";
@@ -129,6 +129,14 @@ export async function renderNotesView(
 
     const openWiki = (title: string, createIfMissing: boolean) =>
       openWikiTarget(ctx.index, title, createIfMissing, ctx.wiki);
+    const backlinkHandlers = {
+      openWiki,
+      openQuote: (quoteId: string) => {
+        if (getDemoQuote(quoteId)) ctx.wiki.openQuoteDetail(quoteId);
+        else ctx.wiki.openLibraryQuote(quoteId);
+      },
+      openNote: (noteId: string) => ctx.wiki.openNoteEditor(noteId),
+    };
 
     const titleInput = stageMain.querySelector("#note-title") as HTMLInputElement;
     titleInput.value = current.title;
@@ -206,7 +214,7 @@ export async function renderNotesView(
     scheduleSave(current.body);
 
     const blPane = stageMain.querySelector("#note-backlinks-pane") as HTMLElement;
-    renderFolioBacklinksPanel(blPane, path, ctx.index, openWiki);
+    renderFolioBacklinksPanel(blPane, path, ctx.index, backlinkHandlers);
   };
 
   paint();

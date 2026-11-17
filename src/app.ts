@@ -7,11 +7,15 @@ import {
   loadQuotesForBook,
   loadAllQuotesFromLibrary,
   ensureBookCard,
+  deleteQuote,
+  restoreDeletedQuote,
   type BookMeta,
 } from "./lib/storage";
 import {
+  dedupeRecentBooks,
   listLibraryBooksFromDisk,
   loadBookCard,
+  mergeDuplicateBookCards,
   mergeLibraryEntries,
   persistBookFile,
   readBookBytes,
@@ -19,6 +23,13 @@ import {
   updateBookCardPath,
   type LibraryBookEntry,
 } from "./lib/book-library";
+import { getEpubCfi, getPdfPosition } from "./lib/anchor";
+import {
+  applyQuotesFilters,
+  emptyQuotesFilterState,
+  uniqueSorted,
+  type QuotesFilterState,
+} from "./lib/quotes-filters";
 import { migrateBibliographyFromCard, type BookBibliography } from "./lib/book-bibliography";
 import {
   extractBibliographyFromEpubBuffer,
@@ -30,7 +41,6 @@ import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/r
 import { bindCoverImageFallbacks, upgradeBookCardCoversInPlace } from "./ui/book-cover";
 import { renderTypographicCoverHtml } from "./lib/typographic-cover";
 import { enqueueCoverGeneration, setCustomBookCover, coverImageUrl } from "./lib/book-cover-cache";
-import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
 import {
@@ -58,8 +68,21 @@ import {
   recordFolderPickerInvocation,
   resetFolderPickerInvocationCount,
 } from "./lib/library-root-telemetry";
-import { createNote } from "./lib/notes";
-import { bindQuoteMetaToggles, expandFirstQuoteMeta, renderUserQuoteCardHtml } from "./ui/user-quote-card";
+import { createNote, listNotes } from "./lib/notes";
+import {
+  bindQuoteMetaToggles,
+  expandFirstQuoteMeta,
+  expandQuoteMetaById,
+  renderUserQuoteCardHtml,
+} from "./ui/user-quote-card";
+import {
+  applyDatePreset,
+  fillFilterOptionLists,
+  readQuotesFilterState,
+  renderQuotesFiltersChromeHtml,
+  resetQuotesFilterControls,
+  syncQuotesFilterChrome,
+} from "./ui/quotes-filters-panel";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
@@ -158,9 +181,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const linkIndex = new NoteIndex();
   let activeNoteId: string | undefined;
 
+  const openLibraryQuoteRef: { fn: (quoteId: string) => Promise<void> } = {
+    fn: async () => {
+      toast("Citaci nelze otevřít", "info");
+    },
+  };
+
   const wikiHandlers = {
     openBookDetail: (slug: string) => openBookDetail(slug),
     openQuoteDetail: (id: string) => openQuoteDetail(id),
+    openLibraryQuote: (id: string) => {
+      void openLibraryQuoteRef.fn(id);
+    },
     openNoteEditor: (noteId: string) => {
       activeNoteId = noteId;
       setRoute("notes");
@@ -180,6 +212,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const openWiki = (title: string, createIfMissing: boolean) =>
     openWikiTarget(linkIndex, title, createIfMissing, wikiHandlers);
+
+  const folioLinkHandlers = () => ({
+    openWiki,
+    openQuote: (quoteId: string) => {
+      if (getDemoQuote(quoteId)) openQuoteDetail(quoteId);
+      else void openLibraryQuoteRef.fn(quoteId);
+    },
+    openNote: (noteId: string) => wikiHandlers.openNoteEditor(noteId),
+  });
 
   const reindexLinks = async () => {
     await rebuildMarginaliaLinkIndex(linkIndex, state.libraryRoot);
@@ -421,12 +462,28 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const pushRecent = (book: RecentBook) => {
-    const list = getRecentBooks().filter((b) => b.slug !== book.slug);
+    const sha = (book.sha256 || "").trim().toLowerCase();
+    const list = getRecentBooks().filter((b) => {
+      if (b.slug === book.slug) return false;
+      if (sha && (b.sha256 || "").trim().toLowerCase() === sha) return false;
+      return true;
+    });
     list.unshift({ ...book, updated: book.updated || new Date().toISOString() });
-    recentBooksCache = list.slice(0, 24);
+    recentBooksCache = dedupeRecentBooks(list).slice(0, 24);
     localStorage.setItem("marginalia.recentBooks", JSON.stringify(recentBooksCache));
     void saveDesktopRecentBooks(recentBooksCache);
     if (state.libraryRoot) void saveDesktopLibraryRoot(state.libraryRoot);
+  };
+
+  const runLibraryDedupeMigration = async () => {
+    if (!state.libraryRoot) return;
+    const result = await mergeDuplicateBookCards(state.libraryRoot);
+    if (result.cardsRemoved > 0) {
+      recentBooksCache = dedupeRecentBooks(getRecentBooks());
+      localStorage.setItem("marginalia.recentBooks", JSON.stringify(recentBooksCache));
+      void saveDesktopRecentBooks(recentBooksCache);
+      await reindexLinks();
+    }
   };
 
   const listBooksForLibrary = async (): Promise<RecentBook[]> => {
@@ -456,6 +513,74 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     syncReadingChrome();
   };
 
+  const repaintReaderHighlights = async (slug: string) => {
+    if (!state.libraryRoot || !slug) return;
+    const docs = await loadQuotesForBook(state.libraryRoot, slug);
+    if (pdf) {
+      pdf.clearHighlights();
+      await pdf.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
+    }
+    if (epub) {
+      await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
+    }
+  };
+
+  const handleDeleteQuote = async (quoteId: string, bookSlugValue: string) => {
+    if (!state.libraryRoot || !quoteId || !bookSlugValue) return;
+    const snapshot = await deleteQuote(state.libraryRoot, bookSlugValue, quoteId);
+    if (!snapshot) {
+      toast("Citaci se nepodařilo smazat", "error");
+      return;
+    }
+    await reindexLinks();
+    if (state.route === "reader" && state.slug === bookSlugValue) {
+      await refreshInspectorAfterQuoteSave(bookSlugValue);
+      await repaintReaderHighlights(bookSlugValue);
+    } else if (state.route === "quotes") {
+      await renderQuotesOverview();
+    }
+    toast("Citace smazána ·", {
+      kind: "info",
+      durationMs: 5000,
+      action: {
+        label: "Vrátit",
+        onClick: () => {
+          void (async () => {
+            await restoreDeletedQuote(snapshot);
+            await reindexLinks();
+            if (state.route === "reader" && state.slug === bookSlugValue) {
+              await refreshInspectorAfterQuoteSave(bookSlugValue);
+              await repaintReaderHighlights(bookSlugValue);
+            } else if (state.route === "quotes") {
+              await renderQuotesOverview();
+            } else {
+              toast("Citace obnovena", "success");
+            }
+          })();
+        },
+      },
+    });
+  };
+
+  const bindQuoteDeleteButtons = (root: ParentNode) => {
+    root.querySelectorAll<HTMLButtonElement>("[data-delete-quote]").forEach((btn) => {
+      if (btn.dataset.bound === "1") return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = btn.dataset.deleteQuote || "";
+        const card = btn.closest(".quote-card") as HTMLElement | null;
+        const slug =
+          card?.getAttribute("data-book-slug") ||
+          card?.dataset.bookSlug ||
+          state.slug ||
+          "";
+        void handleDeleteQuote(id, slug);
+      });
+    });
+  };
+
   const renderInspectorQuotes = (docs: QuoteDocument[]) => {
     if (!docs.length) {
       inspectorBody.innerHTML = `<p class="muted">Zatím žádné citace. Zapněte zvýrazňování a označte text v knize.</p>`;
@@ -478,6 +603,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     bindQuoteCommentEditors(inspectorBody);
     bindQuoteMetaToggles(inspectorBody);
     bindQuoteCitationCopy(inspectorBody);
+    bindQuoteDeleteButtons(inspectorBody);
   };
 
   const bindQuoteCitationCopy = (root: ParentNode) => {
@@ -570,7 +696,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     stageMain.querySelector("#btn-back-library-detail")?.addEventListener("click", () => setRoute("library"));
     bindDemoNavigation();
     const bl = stageMain.querySelector("#detail-backlinks") as HTMLElement | null;
-    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoBook(slug), linkIndex, openWiki);
+    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoBook(slug), linkIndex, folioLinkHandlers());
     syncReadingChrome();
   };
 
@@ -594,7 +720,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       });
     }
     const bl = stageMain.querySelector("#detail-backlinks") as HTMLElement | null;
-    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoQuote(id), linkIndex, openWiki);
+    if (bl) renderFolioBacklinksPanel(bl, indexPathForDemoQuote(id), linkIndex, folioLinkHandlers());
     syncReadingChrome();
   };
 
@@ -711,22 +837,25 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const authorBySlug = new Map(libraryBooks.map((b) => [b.slug, b.author]));
     const titleBySlug = new Map(libraryBooks.map((b) => [b.slug, b.title]));
     if (userQuotes.length) {
-      const paintUserQuotes = (filter: string) => {
-        const q = filter.trim().toLowerCase();
-        const filtered = q
-          ? userQuotes.filter(
-              (d) =>
-                d.quoteText.toLowerCase().includes(q) ||
-                d.comment.toLowerCase().includes(q) ||
-                d.meta.author.toLowerCase().includes(q) ||
-                d.meta.book_title.toLowerCase().includes(q),
-            )
-          : userQuotes;
+      let filtersExpanded = false;
+      let filterState: QuotesFilterState = emptyQuotesFilterState();
+      const liveTitles = uniqueSorted(
+        userQuotes.map((d) => titleBySlug.get(d.meta.book_slug) || d.meta.book_title),
+      );
+      const liveAuthors = uniqueSorted(
+        userQuotes.map((d) => authorBySlug.get(d.meta.book_slug) || d.meta.author),
+      );
+
+      const paintUserQuotes = () => {
+        const text = (stageMain.querySelector("#quotes-filter") as HTMLInputElement | null)?.value ?? "";
+        filterState = readQuotesFilterState(stageMain);
+        const filtered = applyQuotesFilters(userQuotes, text, filterState, { titleBySlug, authorBySlug });
         const list = stageMain.querySelector(".user-quote-list");
         const countEl = stageMain.querySelector(".results-count");
         if (!list || !countEl) return;
-        countEl.textContent = q
-          ? `${filtered.length} / ${userQuotes.length} citací (filtr „${filter}“)`
+        const active = filterState.bookTitles.length || filterState.authors.length || filterState.dateFrom || filterState.dateTo || filterState.onlyWithNote || text.trim();
+        countEl.textContent = active
+          ? `${filtered.length} / ${userQuotes.length} citací`
           : `${userQuotes.length} citací z knihovny`;
         list.innerHTML = filtered.length
           ? filtered
@@ -741,30 +870,40 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
               .join("")
           : `<li class="muted">Nic neodpovídá filtru.</li>`;
         bindQuoteCommentEditors(list);
+        bindQuoteDeleteButtons(list);
+        syncQuotesFilterChrome(stageMain, filterState, filtersExpanded);
       };
+
       stageMain.innerHTML = `
         <div class="page page--wide" data-quotes-ready="1">
           <h1>Databáze citací</h1>
           <p class="muted page-intro">Hledejte přímo zde — text citace, poznámky, autor nebo kniha.</p>
-          <label class="field field--inline quotes-filter page-search">
-            <span class="sr-only">Hledat v citacích</span>
-            <input type="search" id="quotes-filter" placeholder="Hledat v citacích…" autocomplete="off" />
-          </label>
+          ${renderQuotesFiltersChromeHtml()}
           <p class="muted results-count">${userQuotes.length} citací z knihovny</p>
-          <ul class="quote-list user-quote-list">${userQuotes
-            .map((d) =>
-              renderUserQuoteCardHtml(d, {
-                showCommentEditor: true,
-                listAttrs: { "data-user-quote": d.meta.id, "data-book-slug": d.meta.book_slug },
-                bookAuthorFallback: authorBySlug.get(d.meta.book_slug),
-                bookTitleFallback: titleBySlug.get(d.meta.book_slug),
-              }),
-            )
-            .join("")}</ul>
+          <ul class="quote-list user-quote-list"></ul>
         </div>`;
-      bindQuoteCommentEditors(stageMain);
+      fillFilterOptionLists(stageMain, liveTitles, liveAuthors, filterState);
+      paintUserQuotes();
+
       const filterInput = stageMain.querySelector<HTMLInputElement>("#quotes-filter")!;
-      filterInput.addEventListener("input", () => paintUserQuotes(filterInput.value));
+      filterInput.addEventListener("input", () => paintUserQuotes());
+      stageMain.querySelector("#quotes-filters-toggle")?.addEventListener("click", () => {
+        filtersExpanded = !filtersExpanded;
+        syncQuotesFilterChrome(stageMain, readQuotesFilterState(stageMain), filtersExpanded);
+      });
+      stageMain.querySelector("#quotes-filters-clear")?.addEventListener("click", () => {
+        resetQuotesFilterControls(stageMain);
+        filtersExpanded = false;
+        paintUserQuotes();
+      });
+      stageMain.querySelector("#quotes-filters-panel")?.addEventListener("change", () => paintUserQuotes());
+      stageMain.querySelectorAll<HTMLButtonElement>("[data-date-preset]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const preset = btn.dataset.datePreset as "today" | "week" | "month";
+          applyDatePreset(stageMain, preset);
+          paintUserQuotes();
+        });
+      });
       return;
     }
     if (!isDemoEnabled()) {
@@ -939,7 +1078,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const rescanBooksFromFolder = async () => {
     if (!(await requireLibraryConfigured())) return;
+    await runLibraryDedupeMigration();
     const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+    await runLibraryDedupeMigration();
     toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové knihy (PDF/EPUB/MOBI)", n ? "success" : "info");
     if (state.route === "library") await renderLibrary();
   };
@@ -1066,7 +1207,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   const openBookFromBuffer = async (
     buffer: ArrayBuffer,
     fileName: string,
-    opts: { slug?: string; storedPath?: string; skipPersist?: boolean } = {},
+    opts: { slug?: string; storedPath?: string; skipPersist?: boolean; focusQuoteId?: string } = {},
   ) => {
     const sha = await sha256Hex(buffer);
     const fileKind = detectBookFileKind(fileName);
@@ -1087,15 +1228,21 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (!(await requireLibraryConfigured())) return;
     let slug = opts.slug;
     if (!opts.skipPersist) {
-      const persisted = await persistBookFile(state.libraryRoot, state.book, buffer, fileName);
+      const persisted = await persistBookFile(
+        state.libraryRoot,
+        state.book,
+        buffer,
+        fileName,
+        { slug },
+      );
       slug = persisted.slug;
       state.book.filePath = persisted.storedPath;
     } else {
-      slug = slug ?? bookSlug(state.book.title, sha);
       if (opts.storedPath) state.book.filePath = opts.storedPath;
     }
-    state.slug = slug;
-    const existingCard = await loadBookCard(state.libraryRoot, slug);
+    const existingCard = slug
+      ? await loadBookCard(state.libraryRoot, slug)
+      : null;
     if (existingCard) {
       const cardTitle = existingCard.title.trim();
       if (cardTitle && !looksLikeTechnicalSlug(cardTitle)) state.book.title = cardTitle;
@@ -1106,7 +1253,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     } else {
       state.bibliography = migrateBibliographyFromCard(state.book.title, state.book.author, null);
     }
-    await ensureBookCard(state.libraryRoot, state.book);
+    // Stable identity: reuse slug/sha card — never mint a new slug from a renamed title.
+    slug = await ensureBookCard(state.libraryRoot, state.book, { slug });
+    state.slug = slug;
     await refreshInspectorAfterQuoteSave(state.slug);
     const now = new Date().toISOString();
 
@@ -1199,6 +1348,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
 
     enterReaderMode();
+    if (opts.focusQuoteId) {
+      await focusQuoteInReader(opts.focusQuoteId);
+    }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(msg);
@@ -1206,6 +1358,43 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       console.error(err);
       throw err;
     }
+  };
+
+  const focusQuoteInReader = async (quoteId: string) => {
+    if (!state.libraryRoot || !state.slug) return;
+    state.inspectorOpen = true;
+    syncReadingChrome();
+    const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
+    const doc = docs.find((d) => d.meta.id === quoteId);
+    if (doc && pdf) {
+      const pos = getPdfPosition(doc.meta.anchor);
+      if (pos) pdf.scrollToPageIndex(pos.pageIndex);
+    }
+    if (doc && epub) {
+      const cfi = getEpubCfi(doc.meta.anchor);
+      if (cfi) await epub.goToCfi(cfi);
+    }
+    expandQuoteMetaById(inspectorBody, quoteId);
+  };
+
+  openLibraryQuoteRef.fn = async (quoteId: string) => {
+    if (!(await requireLibraryConfigured())) return;
+    const all = await loadAllQuotesFromLibrary(state.libraryRoot);
+    const doc = all.find((d) => d.meta.id === quoteId);
+    if (!doc) {
+      toast("Citace nenalezena", "info");
+      return;
+    }
+    const books = await listBooksForLibrary();
+    const book =
+      books.find((b) => b.slug === doc.meta.book_slug) ||
+      books.find((b) => b.title === doc.meta.book_title);
+    if (!book) {
+      toast("Kniha citace není v knihovně", "info");
+      return;
+    }
+    await reopenRecentBook(book);
+    await focusQuoteInReader(quoteId);
   };
 
   const reopenRecentBook = async (entry: RecentBook) => {
@@ -1409,11 +1598,42 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     },
     rescanBooksFromFolder: async () => {
       if (!(await requireLibraryConfigured())) throw new Error("No library root");
+      await runLibraryDedupeMigration();
       const imported = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+      await runLibraryDedupeMigration();
       if (state.route === "library") await renderLibrary();
       return { imported, total: (await listBooksForLibrary()).length };
     },
     countScannedBookCards: async () => (await listBooksForLibrary()).length,
+    libraryStressSummary: async () => {
+      const books = await listBooksForLibrary();
+      const slugs = new Set<string>();
+      const shas = new Set<string>();
+      let duplicateSlugCount = 0;
+      let duplicateShaCount = 0;
+      for (const b of books) {
+        if (slugs.has(b.slug)) duplicateSlugCount += 1;
+        else slugs.add(b.slug);
+        const sha = (b.sha256 || "").trim().toLowerCase();
+        if (sha) {
+          if (shas.has(sha)) duplicateShaCount += 1;
+          else shas.add(sha);
+        }
+      }
+      return {
+        books: books.length,
+        uniqueSlugs: slugs.size,
+        uniqueShas: shas.size,
+        duplicateSlugCount,
+        duplicateShaCount,
+      };
+    },
+    libraryContentCounts: async () => {
+      if (!state.libraryRoot) return { quotes: 0, notes: 0 };
+      const quotes = await loadAllQuotesFromLibrary(state.libraryRoot);
+      const notes = await listNotes(state.libraryRoot);
+      return { quotes: quotes.length, notes: notes.length };
+    },
     ensureInspectorOpen: () => {
       if (state.route !== "reader") throw new Error("ensureInspectorOpen requires reader route");
       state.inspectorOpen = true;
@@ -1604,9 +1824,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     await ensureLibrarySubdirs(libraryRoot);
     void openLibraryIndex(state.libraryRoot);
     setLibraryPath(state.libraryRoot, state.libraryRoot);
-    void syncAllBooksFromLibraryFolder(libraryRoot, pushRecentFromImport).then(() => {
-      if (state.route === "library") void renderLibrary();
-    });
+    void runLibraryDedupeMigration()
+      .then(() => syncAllBooksFromLibraryFolder(libraryRoot, pushRecentFromImport))
+      .then(() => runLibraryDedupeMigration())
+      .then(() => {
+        if (state.route === "library") void renderLibrary();
+      });
   } else {
     openLibrarySetupModal();
   }

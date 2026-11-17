@@ -1,8 +1,11 @@
 import { detectBookFileKind } from "./book-formats";
-import { bookSlug } from "./paths";
 import { findBookFilesOnDisk, isPathInsideLibrary } from "./library-scan";
 import { ensureBookCard, type BookMeta } from "./storage";
-import { loadBookCard, persistBookFile, type LibraryBookEntry } from "./book-library";
+import {
+  findBookCardBySha256,
+  persistBookFile,
+  type LibraryBookEntry,
+} from "./book-library";
 import { isTauri } from "./runtime";
 import { looksLikeTechnicalSlug, parseFilenameMeta } from "./filename-meta";
 
@@ -17,43 +20,65 @@ function bookKind(fileName: string): "pdf" | "epub" | "mobi" {
   return detectBookFileKind(fileName) ?? "pdf";
 }
 
-/** Register one on-disk book (no reader open). Copies into knihy/ only when file lies outside library root. */
+/**
+ * Register one on-disk book (no reader open).
+ * Identity is content hash — never create a second card when title/metadata differ.
+ */
 export async function registerBookFromDiskPath(
   libraryRoot: string,
   filePath: string,
   pushRecent: ImportRecentPush,
 ): Promise<string | null> {
   if (!isTauri()) return null;
-  const { readFile } = await import("@tauri-apps/plugin-fs");
-  const bytes = await readFile(filePath);
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  const sha = await sha256Hex(buffer);
+  let buffer: ArrayBuffer;
+  try {
+    const { readFile } = await import("@tauri-apps/plugin-fs");
+    const bytes = await readFile(filePath);
+    buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  } catch {
+    // Corrupt / unreadable: skip without throwing so scan continues.
+    return null;
+  }
+  if (buffer.byteLength === 0) return null;
+
+  let sha: string;
+  try {
+    sha = await sha256Hex(buffer);
+  } catch {
+    return null;
+  }
+
   const name = filePath.replace(/^.*[/\\]/, "");
   const parsed = parseFilenameMeta(name);
   const title = parsed.title;
   const authorFromName = parsed.author;
-  const slug = bookSlug(title, sha);
-  const existing = await loadBookCard(libraryRoot, slug);
-  if (existing?.sha256 === sha && existing.path) {
+  const kind = bookKind(name);
+
+  const existingRec = await findBookCardBySha256(libraryRoot, sha);
+  if (existingRec) {
+    const existing = existingRec.card;
     let nextTitle = existing.title || title;
     let nextAuthor = existing.author || authorFromName;
     if (looksLikeTechnicalSlug(nextTitle) && title) nextTitle = title;
     if (!nextAuthor && authorFromName) nextAuthor = authorFromName;
-    if (nextTitle !== existing.title || nextAuthor !== (existing.author ?? "")) {
-      await ensureBookCard(libraryRoot, {
+    const path = existing.path || filePath;
+    const slug = await ensureBookCard(
+      libraryRoot,
+      {
         title: nextTitle,
         author: nextAuthor,
         sha256: sha,
-        filePath: existing.path,
-      });
-    }
+        filePath: path,
+      },
+      { slug: existingRec.slug },
+    );
     pushRecent({
       slug,
-      kind: bookKind(name),
+      kind,
       title: nextTitle,
       author: nextAuthor,
       sha256: sha,
-      filePath: existing.path,
+      filePath: path,
     });
     return slug;
   }
@@ -64,23 +89,22 @@ export async function registerBookFromDiskPath(
     storedPath = persisted.storedPath;
   }
 
-  await ensureBookCard(libraryRoot, {
+  const slug = await ensureBookCard(libraryRoot, {
     title,
     author: authorFromName,
     sha256: sha,
     filePath: storedPath,
   } satisfies BookMeta);
 
-  const card: LibraryBookEntry = {
+  pushRecent({
     slug,
-    kind: bookKind(name),
+    kind,
     title,
     author: authorFromName,
     sha256: sha,
     filePath: storedPath,
     updated: new Date().toISOString(),
-  };
-  pushRecent(card);
+  });
   return slug;
 }
 
@@ -91,8 +115,12 @@ export async function syncAllBooksFromLibraryFolder(
   const paths = await findBookFilesOnDisk(libraryRoot);
   let count = 0;
   for (const p of paths) {
-    const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent);
-    if (slug) count += 1;
+    try {
+      const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent);
+      if (slug) count += 1;
+    } catch {
+      /* one corrupt file must not abort the whole scan */
+    }
   }
   return count;
 }

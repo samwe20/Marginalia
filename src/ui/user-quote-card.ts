@@ -2,6 +2,7 @@ import type { QuoteDocument } from "../lib/quote-markdown";
 import type { BookBibliography } from "../lib/book-bibliography";
 import { looksLikeTechnicalSlug } from "../lib/filename-meta";
 import { escapeAttr, escapeHtml } from "../lib/html";
+import { icons } from "./icons";
 
 /** Session-only: which inspector quote cards have metadata expanded. */
 const expandedQuoteMetaIds = new Set<string>();
@@ -103,6 +104,16 @@ export function expandFirstQuoteMeta(root: ParentNode): boolean {
   return true;
 }
 
+/** Expand one quote card by id (backlink → reader). */
+export function expandQuoteMetaById(root: ParentNode, quoteId: string): boolean {
+  const card = root.querySelector<HTMLElement>(`.quote-card[data-quote-id="${CSS.escape(quoteId)}"]`);
+  if (!card) return false;
+  setMetaExpanded(card, true);
+  card.classList.add("quote-card--focus");
+  card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  return true;
+}
+
 export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardOpts = {}): string {
   const author = displayAuthor(doc.meta.author, opts.bookAuthorFallback);
   const book = displayBookTitle(doc.meta.book_title, opts.bookTitleFallback);
@@ -134,15 +145,20 @@ export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardO
     <span class="tag-chip tag-chip--meta" title="Vytvořeno">${escapeHtml(when)}</span>
   </div>`;
 
+  const deleteBtn = `<button type="button" class="quote-card__delete" data-delete-quote="${escapeAttr(doc.meta.id)}" aria-label="Smazat citaci">${icons.trash}</button>`;
+
   if (opts.collapseMeta) {
     const panelId = `quote-meta-${doc.meta.id}`;
     const expanded = expandedQuoteMetaIds.has(doc.meta.id);
     return `<li class="quote-card" ${attrs} data-quote-id="${escapeAttr(doc.meta.id)}" data-collapse-meta="1" data-meta-expanded="${expanded ? "1" : "0"}">
     <div class="quote-card__head">
       <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(doc.meta.page, opts.pageLabelOpts))}</div>
-      <button type="button" class="quote-card__meta-toggle" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${escapeAttr(panelId)}" aria-label="${expanded ? "Skrýt metadata citace" : "Zobrazit metadata citace"}">
-        <span class="quote-card__chevron" aria-hidden="true"></span>
-      </button>
+      <div class="quote-card__head-actions">
+        <button type="button" class="quote-card__meta-toggle" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${escapeAttr(panelId)}" aria-label="${expanded ? "Skrýt metadata citace" : "Zobrazit metadata citace"}">
+          <span class="quote-card__chevron" aria-hidden="true"></span>
+        </button>
+        ${deleteBtn}
+      </div>
     </div>
     <div class="quote-card__text">${escapeHtml(doc.quoteText)}</div>
     ${commentBlock}
@@ -154,7 +170,10 @@ export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardO
   }
 
   return `<li class="quote-card" ${attrs} data-quote-id="${escapeAttr(doc.meta.id)}">
-    <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(doc.meta.page, opts.pageLabelOpts))}</div>
+    <div class="quote-card__head">
+      <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(doc.meta.page, opts.pageLabelOpts))}</div>
+      <div class="quote-card__head-actions">${deleteBtn}</div>
+    </div>
     <div class="quote-card__text">${escapeHtml(doc.quoteText)}</div>
   ${metaRow}
   ${citeTools}

@@ -7,6 +7,8 @@ import type { NoteMeta } from "../types/folio";
 export interface WikiNavigationHandlers {
   openBookDetail: (slug: string) => void;
   openQuoteDetail: (id: string) => void;
+  /** Open a library quote in the reader at its locus (PDF/EPUB/MOBI). */
+  openLibraryQuote: (quoteId: string) => void;
   openNoteEditor: (noteId: string) => void;
   createNoteWithTitle: (title: string) => Promise<void>;
   toast: (msg: string, kind?: "info" | "error" | "success") => void;
@@ -37,9 +39,9 @@ export function openWikiTarget(
     return;
   }
   if (hit.kind === "quote" || hit.path.startsWith("citace/")) {
-    const id = hit.path.replace(/^citace\//, "");
+    const id = hit.id || hit.path.replace(/^citace\//, "");
     if (getDemoQuote(id)) handlers.openQuoteDetail(id);
-    else handlers.toast(`Citace ${id}`, "info");
+    else handlers.openLibraryQuote(id);
     return;
   }
   handlers.openNoteEditor(hit.id);

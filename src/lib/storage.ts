@@ -1,6 +1,12 @@
 import { ulid } from "ulidx";
 import type { Anchor } from "./anchor";
-import { loadBookCard, saveBookCard, type ParsedBookCard } from "./book-library";
+import {
+  findBookCardByPath,
+  findBookCardBySha256,
+  loadBookCard,
+  saveBookCard,
+  type ParsedBookCard,
+} from "./book-library";
 import { migrateBibliographyFromCard } from "./book-bibliography";
 import { bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
 import {
@@ -52,10 +58,36 @@ async function indexUpsert(doc: QuoteDocument, absPath: string): Promise<void> {
   });
 }
 
-export async function ensureBookCard(libraryRoot: string, book: BookMeta): Promise<string> {
-  const slug = bookSlug(book.title, book.sha256);
-  const existing = await loadBookCard(libraryRoot, slug);
+/**
+ * Upsert a book card. Identity is stable by content hash (then path), never by title —
+ * renaming bibliography must not create a second card/slug.
+ */
+export async function ensureBookCard(
+  libraryRoot: string,
+  book: BookMeta,
+  opts: { slug?: string } = {},
+): Promise<string> {
   const now = new Date().toISOString();
+  let slug = opts.slug?.trim() || "";
+  let existing: ParsedBookCard | null = slug ? await loadBookCard(libraryRoot, slug) : null;
+
+  if (!existing && book.sha256) {
+    const bySha = await findBookCardBySha256(libraryRoot, book.sha256);
+    if (bySha) {
+      slug = bySha.slug;
+      existing = bySha.card;
+    }
+  }
+  if (!existing && book.filePath) {
+    const byPath = await findBookCardByPath(libraryRoot, book.filePath);
+    if (byPath) {
+      slug = byPath.slug;
+      existing = byPath.card;
+    }
+  }
+  if (!slug) slug = bookSlug(book.title, book.sha256);
+  if (!existing) existing = await loadBookCard(libraryRoot, slug);
+
   const card: ParsedBookCard = existing ?? {
     title: book.title,
     author: book.author,
@@ -65,16 +97,73 @@ export async function ensureBookCard(libraryRoot: string, book: BookMeta): Promi
     bibliography: migrateBibliographyFromCard(book.title, book.author, null),
     bibliographyUserEdited: false,
   };
-  card.title = book.title;
-  card.author = book.author;
-  card.sha256 = book.sha256;
-  card.path = book.filePath;
+  // Title/author updates stay on the same slug; never re-key identity from metadata.
+  if (book.title.trim()) card.title = book.title;
+  if (book.author.trim()) card.author = book.author;
+  if (book.sha256.trim()) card.sha256 = book.sha256;
+  if (book.filePath.trim()) card.path = book.filePath;
   card.updated = now;
   if (!existing) {
     card.bibliography = migrateBibliographyFromCard(book.title, book.author, null);
   }
   await saveBookCard(libraryRoot, slug, card);
   return slug;
+}
+
+async function indexRemoveQuote(quoteId: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("index_remove_quote", { quoteId });
+  } catch {
+    /* index optional */
+  }
+}
+
+/** Soft-delete payload for undo — full markdown document + path. */
+export type DeletedQuoteSnapshot = {
+  libraryRoot: string;
+  slug: string;
+  absPath: string;
+  doc: QuoteDocument;
+  rawMarkdown: string;
+};
+
+export async function deleteQuote(
+  libraryRoot: string,
+  slug: string,
+  quoteId: string,
+): Promise<DeletedQuoteSnapshot | null> {
+  const path = quotePath(libraryRoot, slug, quoteId);
+  let raw = "";
+  if (isTauri()) {
+    const { readTextFile, remove, exists } = await import("@tauri-apps/plugin-fs");
+    if (!(await exists(path))) return null;
+    raw = await readTextFile(path);
+    await remove(path);
+  } else {
+    const key = `marginalia:${path}`;
+    raw = localStorage.getItem(key) ?? "";
+    if (!raw) return null;
+    localStorage.removeItem(key);
+  }
+  const doc = parseQuoteMarkdown(raw);
+  await indexRemoveQuote(quoteId);
+  return { libraryRoot, slug, absPath: path, doc, rawMarkdown: raw };
+}
+
+export async function restoreDeletedQuote(snapshot: DeletedQuoteSnapshot): Promise<QuoteDocument> {
+  const { absPath, rawMarkdown, doc } = snapshot;
+  if (isTauri()) {
+    const { mkdir, writeTextFile } = await import("@tauri-apps/plugin-fs");
+    const dir = absPath.replace(/[/\\][^/\\]+$/, "");
+    await mkdir(dir, { recursive: true });
+    await writeTextFile(absPath, rawMarkdown);
+  } else {
+    localStorage.setItem(`marginalia:${absPath}`, rawMarkdown);
+  }
+  await indexUpsert(doc, absPath);
+  return doc;
 }
 
 export async function updateQuoteComment(

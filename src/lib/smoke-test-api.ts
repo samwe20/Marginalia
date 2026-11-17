@@ -58,6 +58,16 @@ export type SmokeTestApi = {
   finishLibrarySetup: (libraryRoot: string) => Promise<number>;
   rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
   countScannedBookCards: () => Promise<number>;
+  /** Stress CI: unique slug/sha diagnostics for large libraries. */
+  libraryStressSummary: () => Promise<{
+    books: number;
+    uniqueSlugs: number;
+    uniqueShas: number;
+    duplicateSlugCount: number;
+    duplicateShaCount: number;
+  }>;
+  /** Stress CI: quote + note file counts under the active library. */
+  libraryContentCounts: () => Promise<{ quotes: number; notes: number }>;
   isSetupModalVisible: () => boolean;
   openBibliographyPanel: () => void;
   setBibliographyField: (field: string, value: string) => void;
