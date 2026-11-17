@@ -53,6 +53,10 @@ export class EpubReader {
 
   constructor(private opts: EpubReaderOptions) {}
 
+  hasPendingHighlight(): boolean {
+    return this.highlights.some((h) => h.hasPending());
+  }
+
   commitPendingHighlight(): boolean {
     for (const handle of this.highlights) {
       if (handle.commitPending()) return true;

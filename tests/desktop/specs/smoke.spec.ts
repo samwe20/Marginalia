@@ -251,23 +251,34 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     return dumpEpubPointerFailure("shadow-drag-error", { err, frameMeta });
   }
   const inFrame = frameDrag.inFrameSelection as { length: number; preview: string };
-  await browser.switchToFrame(null);
-  const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
-  const sel = diag.selection as { selections: unknown[]; mainSelectionLength: number };
-  if ((inFrame?.length ?? 0) < 3 && !sel.selections?.length && (sel.mainSelectionLength ?? 0) < 4) {
-    return dumpEpubPointerFailure("after-shadow-drag-no-selection");
+  if ((inFrame?.length ?? 0) < 3) {
+    await browser.switchToFrame(null);
+    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    return dumpEpubPointerFailure("after-shadow-drag-no-selection", { inFrame, diag });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
   );
+  // Stay in content iframe until S15/S19 press H (switchToFrame(null) clears book selection).
   return {
     space: "foliate-shadow-iframe",
+    stayInFrame: true,
     frameMeta,
     frameDrag,
     viewport,
-    selectionAfterDrag: { inFrame, app: diag.selection },
+    selectionAfterDrag: { inFrame },
     renderInfo,
   };
+}
+
+async function pressHighlightSaveKeyForEpub(pointer: Record<string, unknown>) {
+  if (pointer.stayInFrame === true) {
+    await browser.keys(["H"]);
+    await browser.pause(400);
+    await browser.switchToFrame(null);
+    return;
+  }
+  await pressHighlightSaveKey();
 }
 
 async function pressHighlightSaveKey() {
@@ -546,10 +557,22 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("epub"));
       const before = (await quoteFilesOnDisk(slug)).length;
       const pointer = await pointerSelectEpubText();
-      await browser.pause(500);
-      const afterSelect = (await quoteFilesOnDisk(slug)).length;
-      if (afterSelect !== before) throw new Error(`EPUB selection alone created quote (${before} → ${afterSelect})`);
-      await pressHighlightSaveKey();
+      let afterSelect = before;
+      try {
+        await browser.pause(500);
+        afterSelect = (await quoteFilesOnDisk(slug)).length;
+        if (afterSelect !== before) throw new Error(`EPUB selection alone created quote (${before} → ${afterSelect})`);
+        await pressHighlightSaveKeyForEpub(pointer);
+      } finally {
+        if (pointer.stayInFrame === true) {
+          try {
+            await browser.switchToFrame(null);
+          } catch {
+            /* */
+          }
+          pointer.stayInFrame = false;
+        }
+      }
       try {
         await browser.waitUntil(
           async () => (await quoteFilesOnDisk(slug)).length > before,
@@ -800,10 +823,22 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("mobi"));
       const before = (await quoteFilesOnDisk(slug)).length;
       const pointer = await pointerSelectEpubText();
-      await browser.pause(500);
-      const afterSelect = (await quoteFilesOnDisk(slug)).length;
-      if (afterSelect !== before) throw new Error(`MOBI selection alone created quote (${before} → ${afterSelect})`);
-      await pressHighlightSaveKey();
+      let afterSelect = before;
+      try {
+        await browser.pause(500);
+        afterSelect = (await quoteFilesOnDisk(slug)).length;
+        if (afterSelect !== before) throw new Error(`MOBI selection alone created quote (${before} → ${afterSelect})`);
+        await pressHighlightSaveKeyForEpub(pointer);
+      } finally {
+        if (pointer.stayInFrame === true) {
+          try {
+            await browser.switchToFrame(null);
+          } catch {
+            /* */
+          }
+          pointer.stayInFrame = false;
+        }
+      }
       try {
         await browser.waitUntil(
           async () => (await quoteFilesOnDisk(slug)).length > before,

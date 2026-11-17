@@ -1205,6 +1205,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           mainSelectionPreview: "",
         },
         lastHighlightKeyAt: lastH ?? null,
+        highlighterPending: epub?.hasPendingHighlight() ?? false,
       };
     },
     getLibraryRoot: () => state.libraryRoot,

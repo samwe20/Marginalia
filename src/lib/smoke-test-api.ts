@@ -33,6 +33,7 @@ export type SmokeTestApi = {
       mainSelectionPreview: string;
     };
     lastHighlightKeyAt: number | null;
+    highlighterPending: boolean;
   };
   ensureInspectorOpen: () => void;
   verifyDialogPlugin: () => Promise<{ ok: boolean; detail: string }>;
