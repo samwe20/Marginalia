@@ -138,7 +138,12 @@ export function attachHighlighter(
   root.addEventListener("pointermove", onPointerMove);
   root.addEventListener("pointerup", onPointerUp);
   root.addEventListener("pointercancel", onPointerUp);
+  const onDoubleClick = () => {
+    queueMicrotask(() => syncPendingFromSelection());
+  };
+
   root.addEventListener("mouseup", onMouseUp);
+  root.addEventListener("dblclick", onDoubleClick);
   ownerDoc().addEventListener("selectionchange", syncPendingFromSelection);
 
   const detach = () => {
@@ -147,6 +152,7 @@ export function attachHighlighter(
     root.removeEventListener("pointerup", onPointerUp);
     root.removeEventListener("pointercancel", onPointerUp);
     root.removeEventListener("mouseup", onMouseUp);
+    root.removeEventListener("dblclick", onDoubleClick);
     ownerDoc().removeEventListener("selectionchange", syncPendingFromSelection);
     clearPending();
   };
