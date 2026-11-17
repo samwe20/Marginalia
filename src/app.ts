@@ -1053,7 +1053,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     await ensureBookCard(state.libraryRoot, state.book);
     await refreshInspectorAfterQuoteSave(state.slug);
     const now = new Date().toISOString();
-    const selectionHint = () => toast("Označení připraveno — stiskněte H pro uložení citace", "info");
 
     if (fileKind === "pdf") {
       pushRecent({ ...state.book, slug: state.slug, kind: "pdf", updated: now });
@@ -1063,7 +1062,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       pdf = new PdfReader({
         container: pdfRoot,
         getMode: () => state.mode,
-        onSelectionPending: selectionHint,
         onHighlight: async ({ text, pageIndex, anchor }) => {
           await saveQuote(state.libraryRoot, state.book!, state.slug, text, String(pageIndex + 1), anchor);
           await refreshInspectorAfterQuoteSave(state.slug);
@@ -1090,7 +1088,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         initialCfi: loadReaderPosition(positionSlug),
         onRelocate: (cfi) => saveReaderPosition(positionSlug, cfi),
         getMode: () => state.mode,
-        onSelectionPending: selectionHint,
         onHighlightSaveKey: () => {
           if (state.route !== "reader" || state.mode !== "highlight") return;
           const saved = epub?.commitPendingHighlight();
