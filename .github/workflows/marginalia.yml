@@ -117,7 +117,8 @@ jobs:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
     needs: windows-build
     runs-on: windows-latest
-    timeout-minutes: 45
+    # Suite self-aborts at 35m; keep the job ceiling close so a hung runner fails fast.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020

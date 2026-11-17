@@ -50,7 +50,13 @@ import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
 import { loadReaderPosition, saveReaderPosition } from "./lib/reader-position";
-import { foliateNavLabels, loadReaderFlow, saveReaderFlow, type FoliateFlow } from "./lib/reader-flow";
+import {
+  foliateNavLabels,
+  hydrateReaderFlow,
+  loadReaderFlow,
+  saveReaderFlow,
+  type FoliateFlow,
+} from "./lib/reader-flow";
 import {
   DEMO_ENABLED_KEY,
   disableDemoData,
@@ -851,9 +857,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       });
     });
     stageMain.querySelectorAll<HTMLElement>("[data-reader-flow]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const flow = btn.dataset.readerFlow as FoliateFlow;
-        saveReaderFlow(flow);
+        await saveReaderFlow(flow);
         toast(flow === "scrolled" ? "Čtení: posouvání" : "Čtení: stránkování", "success");
         renderSettings();
       });
@@ -1423,7 +1429,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   });
 
-  await hydrateRecents();
+  await Promise.all([hydrateRecents(), hydrateReaderFlow()]);
   if (isTauri() && (await loadDesktopDemoEnabled())) {
     localStorage.setItem(DEMO_ENABLED_KEY, "1");
   }

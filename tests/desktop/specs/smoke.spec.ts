@@ -418,6 +418,48 @@ async function saveScreenshot(name: string) {
   await browser.saveScreenshot(target);
 }
 
+/**
+ * Restart the installed app under tauri-driver without tripping the WDIO Tauri
+ * service's missing-plugin focus loop (window.wdioTauri is never injected for
+ * driverProvider: "external").
+ */
+async function reloadAppSession() {
+  await browser.reloadSession();
+  await browser.pause(2_500);
+  const handles = await browser.getWindowHandles();
+  if (!handles.length) {
+    throw new Error("no window handle after reloadSession");
+  }
+  await browser.switchToWindow(handles[0]);
+  await browser.waitUntil(
+    async () => {
+      try {
+        return Boolean(await $(".sidebar").isExisting());
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 45_000, interval: 500, timeoutMsg: "app shell missing after reloadSession" },
+  );
+}
+
+/** Foliate paints EPUB/MOBI highlights as SVG overlays, not light-DOM <mark> nodes. */
+async function waitReaderHighlightPainted(label: string, minCount = 1): Promise<number> {
+  let count = 0;
+  await browser.waitUntil(
+    async () => {
+      count = (await callSmokeApi<number>("readerHighlightPaintCount")) ?? 0;
+      return count >= minCount;
+    },
+    {
+      timeout: 30_000,
+      interval: 300,
+      timeoutMsg: `${label}: expected ≥${minCount} painted highlight(s), got ${count}`,
+    },
+  );
+  return count;
+}
+
 async function callSmokeApi<T>(method: string, ...args: unknown[]): Promise<T> {
   return browser.execute(
     function callMarginaliaSmokeApi(payload) {
@@ -735,7 +777,8 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const quoteId = files.find((f) => f.endsWith(".md"))?.replace(/\.md$/, "") ?? "";
       if (!quoteId) throw new Error("EPUB quote id missing");
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
-      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      const painted = await waitReaderHighlightPainted("S15 EPUB after H");
+      await saveScreenshot("smoke-s15-epub-highlight.png");
       await pointerSelectEpubText();
       await browser.pause(400);
       await clickReaderChromeAwayFromText();
@@ -749,6 +792,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const s15Detail = JSON.stringify({
         renderInfo,
         pointer,
+        painted,
         quoteMdBefore: before,
         quoteMdAfterSelection: afterSelect,
         quoteMdAfterH: afterH,
@@ -875,8 +919,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await openPdfFromLibraryCard();
       await $("#btn-back-library").click();
       await browser.pause(800);
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       const rootAfter = await callSmokeApi<string>("getLibraryRoot");
       if (rootAfter !== library) throw new Error(`library root after restart: ${rootAfter}`);
       await goLibrary();
@@ -997,12 +1040,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       if (afterH !== before + 1) {
         throw new Error(`expected exactly one new MOBI quote .md after H (${before} → ${afterH})`);
       }
-      await expect($("#epub-root mark.quote-highlight, #epub-root .quote-highlight")).toBeExisting();
+      const painted = await waitReaderHighlightPainted("S19 MOBI after H");
+      await saveScreenshot("smoke-s19-mobi-highlight.png");
       record(
         "S19",
         "MOBI reader visible text + citace po H",
         true,
-        JSON.stringify({ renderInfo, pointer, quoteMdBefore: before, quoteMdAfterH: afterH }),
+        JSON.stringify({ renderInfo, pointer, painted, quoteMdBefore: before, quoteMdAfterH: afterH }),
       );
     } catch (e) {
       record("S19", "MOBI reader visible text + citace po H", false, String(e));
@@ -1091,8 +1135,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(800);
       let md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
       if (!md.includes(note)) throw new Error("note not in .md before restart");
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       await openPdfFromLibraryCard();
       await ensureInspectorOpen();
       md = await readLibraryText(`citace/${slug}/${quoteId}.md`);
@@ -1275,9 +1318,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
     const chooseFlow = async (flow: Flow) => {
       await $('[data-route="settings"]').click();
       await $(`[data-reader-flow="${flow}"]`).click();
-      await browser.pause(300);
-      const cls = (await $(`[data-reader-flow="${flow}"]`).getAttribute("class")) ?? "";
-      if (!cls.includes("theme-picker__btn--on")) throw new Error(`reading mode ${flow} not selected in Settings`);
+      await browser.waitUntil(
+        async () => ((await $(`[data-reader-flow="${flow}"]`).getAttribute("class")) ?? "").includes("theme-picker__btn--on"),
+        { timeout: 10_000, timeoutMsg: `reading mode ${flow} not selected in Settings` },
+      );
     };
     const openHamlet = async () => {
       await goLibrary();
@@ -1321,12 +1365,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
       await $("#btn-back-library").click();
       await browser.pause(800);
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       await $('[data-route="settings"]').click();
-      await browser.pause(300);
-      const clsAfter = (await $('[data-reader-flow="paginated"]').getAttribute("class")) ?? "";
-      if (!clsAfter.includes("theme-picker__btn--on")) throw new Error("reading mode Stránkování lost after restart");
+      await browser.waitUntil(
+        async () =>
+          ((await $('[data-reader-flow="paginated"]').getAttribute("class")) ?? "").includes("theme-picker__btn--on"),
+        { timeout: 15_000, timeoutMsg: "reading mode Stránkování lost after restart" },
+      );
       await saveScreenshot("smoke-reader-flow-settings-after-restart.png");
       await openHamlet();
       await checkReader("hamlet-paginated-after-restart", "paginated", 50);
@@ -1383,18 +1428,23 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
       const renamedTitle = `Smoke přejmenovaná ${stamp}`;
       await $(`[data-note-filename="${created[1].filename}"]`).click();
-      await browser.pause(800);
-      await $("#note-title").setValue(renamedTitle);
+      await browser.waitUntil(
+        async () => ((await $("#note-title").getValue()) ?? "") === created[1].filename.replace(/\.md$/, ""),
+        { timeout: 10_000, timeoutMsg: "note title field did not show the selected note" },
+      );
+      const title = await $("#note-title");
+      await title.click();
+      await title.setValue(renamedTitle);
       await browser.keys(["Enter"]);
       await browser.waitUntil(async () => (await listFilenames()).includes(`${renamedTitle}.md`), {
-        timeout: 15_000,
+        timeout: 20_000,
         timeoutMsg: "renamed note not in the list",
       });
       const oldName = created[1].filename;
       created[1].filename = `${renamedTitle}.md`;
+      await saveScreenshot("smoke-notes-renamed.png");
 
-      await browser.reloadSession();
-      await browser.pause(4500);
+      await reloadAppSession();
       await openNotes();
       const after = await listFilenames();
       if (after.includes(oldName)) throw new Error(`old filename still present after rename: ${oldName}`);
@@ -1488,11 +1538,31 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
         { timeout: 20_000, timeoutMsg: "notes view not ready" },
       );
+      const before = await browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map((el) => el.dataset.noteFilename ?? ""),
+      );
       await $("#btn-new-note").click();
-      await $(".cm-content").click();
+      await browser.waitUntil(
+        async () => {
+          const names = await browser.execute(() =>
+            Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).map(
+              (el) => el.dataset.noteFilename ?? "",
+            ),
+          );
+          return names.length === before.length + 1 && (await $(".notes-editor-pane .cm-content").isExisting());
+        },
+        { timeout: 20_000, timeoutMsg: "new note editor not ready" },
+      );
+      const editor = await $(".notes-editor-pane .cm-content");
+      await editor.waitForDisplayed({ timeout: 10_000 });
+      await editor.click();
       await browser.keys(["End"]);
       await browser.keys(phrase.split(""));
-      await browser.pause(900);
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute((needle) => (document.body.textContent ?? "").includes(needle), phrase)) === true,
+        { timeout: 10_000, timeoutMsg: "typed note text never appeared in the DOM" },
+      );
       const dom = await browser.execute((needle) => {
         const text = document.body.textContent ?? "";
         return {

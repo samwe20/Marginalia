@@ -89,14 +89,14 @@ export async function renderNotesView(
       await flushSave();
       const note = await createNote(ctx.libraryRoot, DEFAULT_NOTE_TITLE);
       await ctx.onReindex();
-      void renderNotesView(stageMain, ctx, note.id);
+      await renderNotesView(stageMain, ctx, note.id);
     });
 
     stageMain.querySelectorAll("[data-note-id]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = (btn as HTMLElement).dataset.noteId!;
         await flushSave();
-        void renderNotesView(stageMain, ctx, id);
+        await renderNotesView(stageMain, ctx, id);
       });
     });
 
@@ -135,19 +135,12 @@ export async function renderNotesView(
       try {
         await flushSave();
         const renamed = await renameNote(ctx.libraryRoot, note, nextTitle);
-        Object.assign(note, renamed);
-        titleInput.value = renamed.title;
-        const item = activeListItem() as HTMLElement | null;
-        if (item) {
-          item.textContent = renamed.title;
-          item.dataset.noteFilename = renamed.filename;
-        }
         await ctx.onReindex();
+        await renderNotesView(stageMain, ctx, renamed.id);
       } catch (e) {
         console.error("Rename failed", e);
         titleInput.value = note.title;
         ctx.wiki.toast("Přejmenování selhalo", "error");
-      } finally {
         renaming = false;
       }
     };

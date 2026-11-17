@@ -95,10 +95,13 @@ try {
   if (-not (Get-Command tauri-driver -ErrorAction SilentlyContinue)) {
     cargo install tauri-driver --locked
   }
+  # WDIO before() aborts the Node process if the suite exceeds this (hung tauri-driver / bridge loop).
+  $env:MARGINALIA_SMOKE_SUITE_TIMEOUT_MS = "2100000" # 35 minutes
   npm run test:desktop-smoke
   if ($LASTEXITCODE -ne 0) {
     throw "test:desktop-smoke exited with $LASTEXITCODE"
   }
+
   $resultsJson = Join-Path $resultsDir "smoke-results.json"
   if (-not (Test-Path $resultsJson)) {
     throw "smoke-results.json missing at $resultsJson"
