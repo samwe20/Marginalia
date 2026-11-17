@@ -14,10 +14,21 @@ import {
   mergeLibraryEntries,
   persistBookFile,
   readBookBytes,
-  updateBookCardAuthor,
+  updateBookCardBibliography,
   updateBookCardPath,
   type LibraryBookEntry,
 } from "./lib/book-library";
+import { migrateBibliographyFromCard, type BookBibliography } from "./lib/book-bibliography";
+import {
+  extractBibliographyFromEpubBuffer,
+  mapFoliateMetadata,
+  mergeExtractedBibliography,
+} from "./lib/file-metadata";
+import { formatCitation, type CitationStyleId } from "./lib/citation-format";
+import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/reader-bibliography";
+import { renderBookCoverMarkup } from "./ui/book-cover";
+import { renderTypographicCoverHtml } from "./lib/typographic-cover";
+import { enqueueCoverGeneration, setCustomBookCover, coverImageUrl } from "./lib/book-cover-cache";
 import { bookSlug } from "./lib/paths";
 import { pickBookFileViaDialog } from "./lib/open-book";
 import { isTauri } from "./lib/runtime";
@@ -129,6 +140,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     libraryRoot: "",
     mode: "highlight" as HighlightMode,
     book: null as BookMeta | null,
+    bibliography: null as BookBibliography | null,
     slug: "",
     route: "library" as Route,
     inspectorOpen: true,
@@ -142,6 +154,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   let pdf: PdfReader | null = null;
   let pdfPageCounterDetach: (() => void) | null = null;
   let epub: EpubReader | null = null;
+  let readerBibMountedSlug = "";
+  let libraryRenderNonce = 0;
   const linkIndex = new NoteIndex();
   let activeNoteId: string | undefined;
 
@@ -201,10 +215,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   toolbar.innerHTML = `
     <div class="toolbar-left toolbar-left--context">
       <h1 class="context-title" id="context-title">Knihovna</h1>
-      <label class="reader-author-wrap" id="reader-author-wrap" hidden>
-        <span class="reader-author-label">Autor</span>
-        <input type="text" class="reader-author-input" id="reader-author" placeholder="Jméno autora…" autocomplete="off" />
-      </label>
+      <details class="reader-bib" id="reader-bib" hidden>
+        <summary class="reader-bib-summary">Bibliografie</summary>
+        <div class="reader-bib-panel" id="reader-bib-panel"></div>
+      </details>
     </div>
     <div class="toolbar-right">
       <button type="button" class="chip-btn" id="btn-highlight" data-active="true" title="Označte text, pak uložte klávesou H">Zvýrazňovat</button>
@@ -244,8 +258,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
 
   const libraryPathEl = sidebar.querySelector("#library-path")!;
   const contextTitle = toolbar.querySelector("#context-title")!;
-  const readerAuthorWrap = toolbar.querySelector("#reader-author-wrap") as HTMLElement;
-  const readerAuthorInput = toolbar.querySelector("#reader-author") as HTMLInputElement;
+  const readerBib = toolbar.querySelector("#reader-bib") as HTMLDetailsElement;
+  const readerBibPanel = toolbar.querySelector("#reader-bib-panel") as HTMLElement;
   const highlightBtn = toolbar.querySelector("#btn-highlight") as HTMLButtonElement;
   const backlinksBtn = toolbar.querySelector("#btn-backlinks") as HTMLButtonElement;
   const inspectorBody = inspector.querySelector("#inspector-body")!;
@@ -259,14 +273,24 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     contextTitle.textContent = text;
   };
 
+  const mountReaderBibliographyIfNeeded = () => {
+    if (!state.bibliography || !state.slug) return;
+    if (readerBibMountedSlug === state.slug && readerBibPanel.querySelector("[data-bib-field]")) return;
+    readerBibPanel.innerHTML = renderReaderBibliographyFields(state.bibliography);
+    readerBibMountedSlug = state.slug;
+    bindBibliographyForm();
+  };
+
   const syncReadingChrome = () => {
     const inReader = state.route === "reader";
     root.classList.toggle("reading-mode", inReader);
     highlightBtn.hidden = !inReader;
     backlinksBtn.hidden = !inReader;
-    readerAuthorWrap.hidden = !inReader || !state.book;
-    if (inReader && state.book) {
-      readerAuthorInput.value = state.book.author ?? "";
+    readerBib.hidden = !inReader || !state.book;
+    if (inReader && state.bibliography) {
+      mountReaderBibliographyIfNeeded();
+    } else if (!inReader) {
+      readerBibMountedSlug = "";
     }
     if (!inReader) {
       root.classList.add("backlinks-hidden");
@@ -276,11 +300,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     backlinksBtn.dataset.active = String(state.inspectorOpen);
   };
 
-  const persistBookAuthor = async () => {
-    if (!state.book || !state.slug || !state.libraryRoot) return;
-    const author = readerAuthorInput.value.trim();
+  const persistBibliography = async () => {
+    if (!state.book || !state.slug || !state.libraryRoot || !state.bibliography) return;
+    const bibliography = readBibliographyFromForm(readerBibPanel);
+    state.bibliography = bibliography;
+    const author =
+      bibliography.authors.map((a) => `${a.given} ${a.family}`.trim()).filter(Boolean).join(", ") ||
+      state.book.author;
     state.book.author = author;
-    await updateBookCardAuthor(state.libraryRoot, state.slug, author);
+    await updateBookCardBibliography(state.libraryRoot, state.slug, bibliography, {
+      userEdited: true,
+      title: bibliography.title || state.book.title,
+    });
     const kind = detectBookFileKind(state.book.filePath) ?? "pdf";
     pushRecent({
       slug: state.slug,
@@ -292,6 +323,32 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
     if (state.route === "reader") await refreshInspectorAfterQuoteSave(state.slug);
     if (state.route === "quotes") await renderQuotesOverview();
+  };
+
+  const bindBibliographyForm = () => {
+    readerBibPanel.querySelectorAll("input").forEach((el) => {
+      el.addEventListener("change", () => void persistBibliography());
+      el.addEventListener("blur", () => void persistBibliography());
+    });
+    readerBibPanel.querySelector("#reader-bib-cover-file")?.addEventListener("change", () => {
+      const input = readerBibPanel.querySelector("#reader-bib-cover-file") as HTMLInputElement;
+      const file = input.files?.[0];
+      if (!file || !state.slug || !state.libraryRoot || !state.book) return;
+      void setCustomBookCover(state.libraryRoot, state.slug, state.book.sha256, file)
+        .then(() => toast("Vlastní obálka uložena", "success"))
+        .catch(() => toast("Obálku se nepodařilo uložit", "error"));
+      input.value = "";
+    });
+    readerBibPanel.querySelector("#reader-bib-add-author")?.addEventListener("click", () => {
+      if (!state.bibliography) return;
+      state.bibliography = {
+        ...state.bibliography,
+        authors: [...state.bibliography.authors, { given: "", family: "" }],
+      };
+      readerBibPanel.innerHTML = renderReaderBibliographyFields(state.bibliography);
+      readerBibMountedSlug = state.slug;
+      bindBibliographyForm();
+    });
   };
 
   const bindQuoteCommentEditors = (root: ParentNode) => {
@@ -368,9 +425,37 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const bookAuthor = state.book?.author ?? "";
     inspectorBody.innerHTML = `<ul class="quote-list inspector-quote-list">${docs
-      .map((d) => renderUserQuoteCardHtml(d, { showCommentEditor: true, bookAuthorFallback: bookAuthor }))
+      .map((d) =>
+        renderUserQuoteCardHtml(d, {
+          showCommentEditor: true,
+          bookAuthorFallback: bookAuthor,
+          bibliography: state.bibliography,
+        }),
+      )
       .join("")}</ul>`;
     bindQuoteCommentEditors(inspectorBody);
+    bindQuoteCitationCopy(inspectorBody);
+  };
+
+  const bindQuoteCitationCopy = (root: ParentNode) => {
+    root.querySelectorAll<HTMLButtonElement>("[data-copy-citation]").forEach((btn) => {
+      if (btn.dataset.bound === "1") return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => {
+        if (!state.bibliography) return;
+        const card = btn.closest(".quote-card");
+        const quoteText = card?.querySelector(".quote-card__text")?.textContent?.trim() ?? "";
+        const pageLabel = card?.querySelector(".quote-card__page")?.textContent?.trim() ?? "";
+        const style = btn.dataset.copyCitation as CitationStyleId;
+        void formatCitation(style, { quoteText, pageLabel, bibliography: state.bibliography })
+          .then((text) => {
+            (window as unknown as { __MARGINALIA_LAST_CITATION__?: string }).__MARGINALIA_LAST_CITATION__ = text;
+            return navigator.clipboard.writeText(text);
+          })
+          .then(() => toast("Citace zkopírována", "success"))
+          .catch(() => toast("Citaci se nepodařilo zkopírovat", "error"));
+      });
+    });
   };
 
   const setRoute = (route: Route) => {
@@ -471,8 +556,40 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   };
 
   const renderLibrary = async () => {
+    const renderNonce = ++libraryRenderNonce;
     const recent = await listBooksForLibrary();
+    if (renderNonce !== libraryRenderNonce) return;
     const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
+    const userCards = recent.length
+      ? (
+          await Promise.all(
+            recent.map(async (b) => {
+              const cover = state.libraryRoot
+                ? await renderBookCoverMarkup({
+                    libraryRoot: state.libraryRoot,
+                    slug: b.slug,
+                    title: b.title,
+                    author: b.author,
+                  })
+                : renderTypographicCoverHtml({
+                    slug: b.slug,
+                    title: b.title,
+                    author: b.author,
+                  });
+              return `
+              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
+                data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
+                data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
+                title="${escapeAttr(b.title)}">
+                ${cover}
+                <div class="book-card__title">${escapeHtml(b.title)}</div>
+                <div class="book-card__meta">${escapeHtml(b.author || "—")} · ${b.kind.toUpperCase()}</div>
+              </button>`;
+            }),
+          )
+        ).join("")
+      : "";
+    if (renderNonce !== libraryRenderNonce) return;
     stageMain.innerHTML = `
       <div class="page">
         <h1>Knihovna</h1>
@@ -494,19 +611,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           recent.length
             ? `<section class="library-section">
             <h2 class="section-title">Nedávno otevřené</h2>
-            <div class="book-grid">${recent
-              .map(
-                (b) => `
-              <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
-                data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
-                data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
-                title="${escapeAttr(b.title)}">
-                <div class="book-card__cover book-card__cover--letter">${escapeHtml(b.title.slice(0, 1).toUpperCase())}</div>
-                <div class="book-card__title">${escapeHtml(b.title)}</div>
-                <div class="book-card__meta">${b.kind.toUpperCase()}</div>
-              </button>`,
-                )
-                .join("")}</div></section>`
+            <div class="book-grid">${userCards}</div></section>`
             : demoBooks.length
               ? ""
               : `<p class="muted">Ve složce knihovny zatím nejsou podporované knihy — přidejte PDF, EPUB nebo MOBI a zvolte Obnovit knihy.</p>`
@@ -530,6 +635,19 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       });
     });
     bindDemoNavigation();
+    if (state.libraryRoot && recent.length) {
+      void enqueueCoverGeneration(
+        state.libraryRoot,
+        recent.map((b) => ({
+          slug: b.slug,
+          kind: b.kind,
+          sha256: b.sha256,
+          title: b.title,
+          author: b.author,
+          filePath: b.filePath,
+        })),
+      );
+    }
   };
 
   const renderQuotesOverview = async () => {
@@ -1055,6 +1173,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (existingCard) {
       if (existingCard.title.trim()) state.book.title = existingCard.title.trim();
       state.book.author = existingCard.author?.trim() ?? "";
+      state.bibliography = { ...existingCard.bibliography, authors: [...existingCard.bibliography.authors] };
+    } else {
+      state.bibliography = migrateBibliographyFromCard(state.book.title, state.book.author, null);
     }
     await ensureBookCard(state.libraryRoot, state.book);
     await refreshInspectorAfterQuoteSave(state.slug);
@@ -1075,6 +1196,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         },
       });
       await pdf.load(buffer);
+      readerBibPanel.innerHTML = "";
       const surface = stageMain.querySelector(".reader-surface") as HTMLElement;
       const counter = stageMain.querySelector("#reader-page-counter") as HTMLElement;
       pdfPageCounterDetach?.();
@@ -1106,6 +1228,23 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         },
       });
       await epub.load(new File([buffer], fileName, { type: mimeForBookFileName(fileName) }));
+      if (!existingCard?.bibliographyUserEdited && state.bibliography) {
+        const fromFoliate = mapFoliateMetadata(epub.getPackageMetadata());
+        const fromOpf = await extractBibliographyFromEpubBuffer(buffer);
+        const merged = mergeExtractedBibliography(
+          state.bibliography,
+          { ...fromOpf, ...fromFoliate, authors: fromFoliate.authors?.length ? fromFoliate.authors : fromOpf.authors },
+        );
+        state.bibliography = merged;
+        if (merged.title.trim()) state.book.title = merged.title.trim();
+        state.book.author =
+          merged.authors.map((a) => `${a.given} ${a.family}`.trim()).filter(Boolean).join(", ") || state.book.author;
+        await updateBookCardBibliography(state.libraryRoot, state.slug, merged, {
+          userEdited: false,
+          title: state.book.title,
+        });
+      }
+      readerBibPanel.innerHTML = "";
       const docs = await loadQuotesForBook(state.libraryRoot, state.slug);
       await epub.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor })));
       await refreshInspectorAfterQuoteSave(state.slug);
@@ -1251,6 +1390,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return epub.readerRenderInfo();
     },
     epubPointerSelectionRect: () => epub?.readerPointerSelectionRect() ?? null,
+    prepareEpubTextSelection: () => epub?.prepareSmokeTextSelection() ?? false,
     epubSelectionDiagnostics: () => {
       const lastH = (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number })
         .__MARGINALIA_LAST_HIGHLIGHT_H__;
@@ -1350,6 +1490,48 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return { targetTitle, backlinkCount: backlinks.length };
     },
     currentBookSlug: () => state.slug,
+    openBibliographyPanel: () => {
+      readerBib.open = true;
+      readerBib.hidden = false;
+      mountReaderBibliographyIfNeeded();
+    },
+    setBibliographyField: (field: string, value: string) => {
+      readerBib.open = true;
+      readerBib.hidden = false;
+      mountReaderBibliographyIfNeeded();
+      const el = readerBibPanel.querySelector(`[data-bib-field="${field}"]`) as HTMLInputElement | null;
+      if (!el) throw new Error(`Missing bibliography field: ${field}`);
+      el.value = value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    getBibliographyField: (field: string) => {
+      const el = readerBibPanel.querySelector(`[data-bib-field="${field}"]`) as HTMLInputElement | null;
+      return el?.value ?? "";
+    },
+    getLastCitationCopy: () =>
+      (window as unknown as { __MARGINALIA_LAST_CITATION__?: string }).__MARGINALIA_LAST_CITATION__ ?? "",
+    libraryCoverDiagnostics: async () => {
+      const books = await listBooksForLibrary();
+      const out: { slug: string; kind: string; hasCachedImage: boolean; hasTypographicOnly: boolean }[] = [];
+      for (const b of books) {
+        const src = state.libraryRoot ? await coverImageUrl(state.libraryRoot, b.slug) : null;
+        const hasImg = Boolean(src);
+        out.push({
+          slug: b.slug,
+          kind: b.kind,
+          hasCachedImage: hasImg,
+          hasTypographicOnly: !hasImg,
+        });
+      }
+      return out;
+    },
+    triggerCopyCitation: async (style: CitationStyleId) => {
+      const btn = inspectorBody.querySelector(`[data-copy-citation="${style}"]`) as HTMLButtonElement | null;
+      if (!btn) throw new Error(`No citation button for ${style}`);
+      btn.click();
+      await new Promise((r) => window.setTimeout(r, 400));
+      return (window as unknown as { __MARGINALIA_LAST_CITATION__?: string }).__MARGINALIA_LAST_CITATION__ ?? "";
+    },
   });
 
   fileInput.addEventListener("change", () => {
@@ -1371,8 +1553,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   });
 
-  readerAuthorInput.addEventListener("change", () => void persistBookAuthor());
-  readerAuthorInput.addEventListener("blur", () => void persistBookAuthor());
 
     highlightBtn.addEventListener("click", () => {
     state.mode = state.mode === "highlight" ? "off" : "highlight";

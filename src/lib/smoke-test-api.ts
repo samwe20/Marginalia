@@ -27,6 +27,7 @@ export type SmokeTestApi = {
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;
+  prepareEpubTextSelection: () => boolean;
   epubSelectionDiagnostics: () => {
     renderInfo: {
       mode: "iframe" | "fallback" | "empty";
@@ -58,6 +59,14 @@ export type SmokeTestApi = {
   rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
   countScannedBookCards: () => Promise<number>;
   isSetupModalVisible: () => boolean;
+  openBibliographyPanel: () => void;
+  setBibliographyField: (field: string, value: string) => void;
+  getBibliographyField: (field: string) => string;
+  getLastCitationCopy: () => string;
+  triggerCopyCitation: (style: "informal" | "iso690" | "apa7") => Promise<string>;
+  libraryCoverDiagnostics: () => Promise<
+    { slug: string; kind: string; hasCachedImage: boolean; hasTypographicOnly: boolean }[]
+  >;
 };
 
 declare global {

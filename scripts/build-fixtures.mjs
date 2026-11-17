@@ -57,6 +57,7 @@ zip.file(
     <dc:language>en</dc:language>
   </metadata>
   <manifest>
+    <item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="chap" href="chapter.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
@@ -70,6 +71,11 @@ zip.file(
 <head><title>Nav</title></head>
 <body><nav epub:type="toc"><ol><li><a href="chapter.xhtml">Chapter</a></li></ol></nav></body></html>`,
 );
+const coverPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAGQAAAAeCAIAAADby5UUAAAAFklEQVR4nO3BMQEAAADCoPVP7WkJoAAAAG4fEJYAAZQk6iMAAAAASUVORK5CYII=",
+  "base64",
+);
+zip.file("cover.png", coverPng);
 zip.file(
   "chapter.xhtml",
   `<?xml version="1.0" encoding="UTF-8"?>

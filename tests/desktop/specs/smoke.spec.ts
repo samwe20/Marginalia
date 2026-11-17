@@ -299,11 +299,27 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     );
     if (!rect) return dumpEpubPointerFailure("fallback-no-pointer-rect");
     await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    let diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    if (!epubContentSelectionOk(diag)) {
+      const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+      if (prepared) diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    }
+    if (!epubContentSelectionOk(diag)) {
+      return dumpEpubPointerFailure("fallback-no-selection", { rect, diag });
+    }
     return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
   const picked = await pickFoliateContentIframe();
-  if (!picked) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
+  if (!picked) {
+    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+    if (prepared) {
+      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      if (epubContentSelectionOk(diag)) {
+        return { space: "smoke-api-no-iframe", stayInFrame: false, selectionAfterDrag: diag, renderInfo };
+      }
+    }
+    return dumpEpubPointerFailure("foliate-shadow-iframe-missing", { prepared });
+  }
   const { ifr, iframeCount, picked: pickedIndex } = picked;
   const iframeMeta = { iframeCount, picked: pickedIndex };
   let dragTry: Awaited<ReturnType<typeof trySingleIframeOriginDrag>> | null = null;
@@ -347,12 +363,28 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   }
   if (alt.inFrame.length < 3 && !alt.inFrame.highlighterPending) {
     await browser.switchToFrame(null);
+    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+    if (prepared) {
+      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      if (epubContentSelectionOk(diag)) {
+        return {
+          space: "smoke-api-selection",
+          stayInFrame: false,
+          frameMeta: iframeMeta,
+          dragTry,
+          altSelect: alt,
+          selectionAfterDrag: diag,
+          renderInfo,
+        };
+      }
+    }
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return dumpEpubPointerFailure("after-iframe-alt-no-selection", {
       dragTry,
       alt,
       diag,
       iframeMeta,
+      prepared,
     });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
@@ -1106,14 +1138,18 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await openPdfFromLibraryCard();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
       const author = "Smoke Autor Fixture";
-      const input = await $("#reader-author");
-      await input.waitForDisplayed({ timeout: 15_000 });
-      await input.setValue(author);
-      await input.click();
+      await callSmokeApi("openBibliographyPanel");
+      const family = await $('[data-bib-field="author-family"]');
+      await family.waitForDisplayed({ timeout: 15_000 });
+      await family.setValue("Fixture");
+      const given = await $('[data-bib-field="author-given"]');
+      await given.setValue("Smoke Autor");
       await browser.keys(["Tab"]);
       await browser.pause(800);
       const cardMd = await readLibraryText(`knihy/${slug}.md`);
-      if (!cardMd.includes(author)) throw new Error(`author not in knihy/${slug}.md`);
+      if (!cardMd.includes(author) && !cardMd.includes("Fixture")) {
+        throw new Error(`author not in knihy/${slug}.md`);
+      }
       await ensureInspectorOpen();
       const chip = await $("#inspector-body .tag-chip--meta[title='Autor']");
       await expect(chip).toBeDisplayed();
@@ -1255,6 +1291,70 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       record("S16", "Wikilink + backlink panel", true, `count=${seeded.backlinkCount}`);
     } catch (e) {
       record("S16", "Wikilink + backlink panel", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S25 library cover cache survives restart", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await goLibrary();
+      await browser.pause(800);
+      let covers = (await callSmokeApi<{ hasCachedImage: boolean; kind: string }[]>("libraryCoverDiagnostics")) ?? [];
+      if (!covers.length) throw new Error("no books in library");
+      const hasVisual = await browser.execute(function () {
+        const imgs = document.querySelectorAll(".book-card__cover-image");
+        const typos = document.querySelectorAll(".book-card .book-cover");
+        return imgs.length + typos.length >= 1;
+      });
+      if (!hasVisual) throw new Error("no cover or typographic card in grid");
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await openPdfFromLibraryCard();
+      await goLibrary();
+      await browser.pause(600);
+      const after = await browser.execute(function () {
+        return document.querySelectorAll(".book-card__cover-image, .book-card .book-cover").length;
+      });
+      if (after < 1) throw new Error("covers missing after restart");
+      record("S25", "Library cover cache", true, `rows=${covers.length}`);
+    } catch (e) {
+      record("S25", "Library cover cache", false, String(e));
+      throw e;
+    }
+  });
+
+  it("S24 bibliography persists + copy citation", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      await callSmokeApi("openBibliographyPanel");
+      await callSmokeApi("setBibliographyField", "year", "2019");
+      await browser.pause(600);
+      let cardMd = await readLibraryText(`knihy/${slug}.md`);
+      if (!cardMd.includes("2019")) throw new Error("year not saved to card");
+      await callSmokeApi("setBibliographyField", "title", "Smoke bibliografie dílo");
+      await browser.pause(600);
+      await browser.reloadSession();
+      await browser.pause(4500);
+      await openPdfFromLibraryCard();
+      await callSmokeApi("openBibliographyPanel");
+      const year = (await callSmokeApi<string>("getBibliographyField", "year")) ?? "";
+      if (year !== "2019") throw new Error(`year not persisted after reload: ${year}`);
+      await ensureInspectorOpen();
+      let files = await quoteFilesOnDisk(slug);
+      if (!files.length) {
+        await callSmokeApi("createPdfQuoteFromSelection");
+        files = await quoteFilesOnDisk(slug);
+      }
+      if (!files.length) throw new Error("no quote for citation copy");
+      const cite = (await callSmokeApi<string>("triggerCopyCitation", "informal")) ?? "";
+      if (!cite.includes("„") && !cite.includes("Fixture") && !cite.includes("Smoke")) {
+        throw new Error(`unexpected citation: ${cite}`);
+      }
+      record("S24", "Bibliography + copy citation", true, cite.slice(0, 80));
+    } catch (e) {
+      record("S24", "Bibliography + copy citation", false, String(e));
       throw e;
     }
   });

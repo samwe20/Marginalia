@@ -1,6 +1,8 @@
 import { ulid } from "ulidx";
 import type { Anchor } from "./anchor";
-import { bookCardPath, bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
+import { loadBookCard, saveBookCard, type ParsedBookCard } from "./book-library";
+import { migrateBibliographyFromCard } from "./book-bibliography";
+import { bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
 import {
   extractQuoteBodyForIndex,
   formatQuoteMarkdown,
@@ -52,10 +54,26 @@ async function indexUpsert(doc: QuoteDocument, absPath: string): Promise<void> {
 
 export async function ensureBookCard(libraryRoot: string, book: BookMeta): Promise<string> {
   const slug = bookSlug(book.title, book.sha256);
-  const path = bookCardPath(libraryRoot, slug);
+  const existing = await loadBookCard(libraryRoot, slug);
   const now = new Date().toISOString();
-  const body = `---\n\ntitle: ${JSON.stringify(book.title)}\nauthor: ${JSON.stringify(book.author)}\nsha256: ${book.sha256}\npath: ${JSON.stringify(book.filePath)}\nupdated: ${now}\n\n`;
-  await writeText(path, body);
+  const card: ParsedBookCard = existing ?? {
+    title: book.title,
+    author: book.author,
+    sha256: book.sha256,
+    path: book.filePath,
+    updated: now,
+    bibliography: migrateBibliographyFromCard(book.title, book.author, null),
+    bibliographyUserEdited: false,
+  };
+  card.title = book.title;
+  card.author = book.author;
+  card.sha256 = book.sha256;
+  card.path = book.filePath;
+  card.updated = now;
+  if (!existing) {
+    card.bibliography = migrateBibliographyFromCard(book.title, book.author, null);
+  }
+  await saveBookCard(libraryRoot, slug, card);
   return slug;
 }
 

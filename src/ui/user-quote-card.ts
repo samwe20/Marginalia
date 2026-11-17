@@ -1,4 +1,5 @@
 import type { QuoteDocument } from "../lib/quote-markdown";
+import type { BookBibliography } from "../lib/book-bibliography";
 import { escapeAttr, escapeHtml } from "../lib/html";
 
 export function formatQuotePageLabel(page: string): string {
@@ -26,6 +27,7 @@ export type UserQuoteCardOpts = {
   showCommentEditor?: boolean;
   listAttrs?: Record<string, string>;
   bookAuthorFallback?: string;
+  bibliography?: BookBibliography | null;
 };
 
 export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardOpts = {}): string {
@@ -44,7 +46,18 @@ export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardO
       : doc.comment.trim()
         ? `<p class="quote-card__comment quote-card__comment--readonly">${escapeHtml(doc.comment)}</p>`
         : "";
-  return `<li class="quote-card" ${attrs}>
+  const citeTools =
+    opts.bibliography ?
+      `<details class="quote-card__cite">
+        <summary class="quote-card__cite-summary">Kopírovat citaci</summary>
+        <div class="quote-card__cite-actions" role="group" aria-label="Formát citace">
+          <button type="button" class="ghost-btn quote-card__cite-btn" data-copy-citation="informal" data-quote-id="${escapeAttr(doc.meta.id)}">Neformální</button>
+          <button type="button" class="ghost-btn quote-card__cite-btn" data-copy-citation="iso690" data-quote-id="${escapeAttr(doc.meta.id)}">ČSN ISO 690</button>
+          <button type="button" class="ghost-btn quote-card__cite-btn" data-copy-citation="apa7" data-quote-id="${escapeAttr(doc.meta.id)}">APA 7</button>
+        </div>
+      </details>`
+    : "";
+  return `<li class="quote-card" ${attrs} data-quote-id="${escapeAttr(doc.meta.id)}">
     <div class="quote-card__page">${escapeHtml(formatQuotePageLabel(doc.meta.page))}</div>
     <div class="quote-card__text">${escapeHtml(doc.quoteText)}</div>
   <div class="tag-row quote-card__meta" aria-label="Metadata citace">
@@ -52,6 +65,7 @@ export function renderUserQuoteCardHtml(doc: QuoteDocument, opts: UserQuoteCardO
     <span class="tag-chip tag-chip--meta" title="Dílo">${escapeHtml(book)}</span>
     <span class="tag-chip tag-chip--meta" title="Vytvořeno">${escapeHtml(when)}</span>
   </div>
+  ${citeTools}
   ${commentBlock}
 </li>`;
 }

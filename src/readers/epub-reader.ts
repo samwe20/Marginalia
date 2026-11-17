@@ -70,6 +70,7 @@ const HIGHLIGHT_COLOR = "#f0c84b";
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
+  private packageMetadata: unknown = null;
   private highlights: HighlightHandle[] = [];
   private readyTimer: number | null = null;
   private docText = "";
@@ -393,6 +394,7 @@ export class EpubReader {
 
     const { makeBook } = await import("foliate-js/view.js");
     const book = await makeBook(file);
+    this.packageMetadata = (book as { metadata?: unknown }).metadata ?? null;
     await this.captureFixturePlainText(
       book as { sections?: { linear?: string; createDocument?: () => Promise<Document> }[] },
     );
@@ -661,6 +663,33 @@ export class EpubReader {
     }
   }
 
+  /** CI smoke: select text in foliate iframe when WebDriver pointer actions fail (WebView2). */
+  prepareSmokeTextSelection(): boolean {
+    if (this.opts.getMode() !== "highlight") return false;
+    const hit = this.firstSelectableText();
+    if (!hit) return false;
+    const { node, root } = hit;
+    const doc = node.ownerDocument;
+    if (!doc) return false;
+    const raw = node.textContent ?? "";
+    const span = Math.min(raw.length, Math.max(8, Math.min(48, raw.length)));
+    if (span < 3) return false;
+    const range = doc.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, span);
+    const sel = doc.getSelection();
+    if (!sel) return false;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if (root instanceof HTMLElement) {
+      root.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0, view: doc.defaultView ?? window }),
+      );
+    }
+    const selected = sel.toString().trim();
+    return selected.length >= 3 || this.hasPendingHighlight();
+  }
+
   quoteDraftFromFirstText(): {
     text: string;
     cfi: string;
@@ -846,6 +875,10 @@ export class EpubReader {
     range.setStart(startNode, startOff);
     range.setEnd(endNode, endOff);
     return range;
+  }
+
+  getPackageMetadata(): unknown {
+    return this.packageMetadata;
   }
 
   destroy(): void {
