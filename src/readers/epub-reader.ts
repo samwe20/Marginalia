@@ -169,6 +169,7 @@ export class EpubReader {
     iframeTextLength: number;
     fallbackTextLength: number;
     visibleTextLength: number;
+    iframeElementInLightDom: boolean;
   } {
     const fallback = this.opts.container.querySelector(".epub-fallback-text");
     return {
@@ -176,6 +177,7 @@ export class EpubReader {
       iframeTextLength: this.foliateIframeVisibleTextLength(),
       fallbackTextLength: fallback?.textContent?.trim().length ?? 0,
       visibleTextLength: this.visibleDomTextLength(),
+      iframeElementInLightDom: Boolean(this.opts.container.querySelector("iframe")),
     };
   }
 

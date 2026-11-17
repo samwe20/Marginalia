@@ -14,6 +14,7 @@ export type SmokeTestApi = {
     iframeTextLength: number;
     fallbackTextLength: number;
     visibleTextLength: number;
+    iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;
   ensureInspectorOpen: () => void;

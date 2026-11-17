@@ -120,9 +120,12 @@ async function pointerSelectPdfText(): Promise<void> {
 async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: number; y2: number; space: string }> {
   await callSmokeApi<number>("ensureEpubReaderReady");
   const renderInfo = await callSmokeApi<{ mode: string }>("epubReaderRenderInfo");
-  if (renderInfo.mode === "iframe") {
+  const iframeInLightDom = await browser.execute(function () {
+    return !!document.querySelector("#epub-root iframe");
+  });
+  if (renderInfo.mode === "iframe" && iframeInLightDom) {
     const iframe = await $("#epub-root iframe");
-    await iframe.waitForExist({ timeout: 15_000 });
+    await iframe.waitForExist({ timeout: 5_000 });
     await browser.switchToFrame(iframe);
     const block = (await $("p, span, body")) as WebdriverIO.Element;
     const local = (await browser.execute(function () {
@@ -147,7 +150,7 @@ async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: numb
       "epubPointerSelectionRect",
     );
     if (!rect) rect = local;
-    return { ...rect, space: "iframe" };
+    return { ...rect, space: "iframe-frame" };
   }
   let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
@@ -160,7 +163,13 @@ async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: numb
   }
   if (!rect) throw new Error("EPUB/MOBI reader text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-  return { ...rect, space: renderInfo.mode === "fallback" ? "fallback" : "viewport" };
+  const space =
+    renderInfo.mode === "fallback"
+      ? "fallback"
+      : renderInfo.mode === "iframe"
+        ? "iframe-viewport"
+        : "viewport";
+  return { ...rect, space };
 }
 
 async function pressHighlightSaveKey() {

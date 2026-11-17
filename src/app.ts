@@ -1181,6 +1181,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           iframeTextLength: 0,
           fallbackTextLength: 0,
           visibleTextLength: 0,
+          iframeElementInLightDom: false,
         };
       }
       return epub.readerRenderInfo();
