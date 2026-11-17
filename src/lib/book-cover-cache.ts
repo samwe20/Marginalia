@@ -267,13 +267,16 @@ export async function enqueueCoverGeneration(
     author: string;
     filePath: string;
   }[],
-  onDone?: () => void,
+  /** Called only when at least one cover was newly written (never on a no-op pass). */
+  onChanged?: () => void,
 ): Promise<void> {
+  let changed = false;
   for (const b of books) {
     const valid = await isCoverCacheValid(libraryRoot, b.slug, b.sha256);
     if (valid) continue;
     try {
       await ensureBookCoverCached({ libraryRoot, ...b });
+      changed = true;
     } catch (e) {
       console.warn("cover cache", b.slug, e);
     }
@@ -281,5 +284,5 @@ export async function enqueueCoverGeneration(
       setTimeout(resolve, 0);
     });
   }
-  onDone?.();
+  if (changed) onChanged?.();
 }

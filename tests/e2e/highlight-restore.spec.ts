@@ -72,7 +72,10 @@ test.describe("highlight persistence", () => {
         .toBeGreaterThan(0);
 
       await page.locator("#btn-back-library").click();
-      await page.locator(`.book-card[data-kind="${cardKind}"]`).first().click();
+      await expect(page.locator("[data-library-ready='1']")).toBeVisible({ timeout: 15_000 });
+      const card = page.locator(`.book-card[data-kind="${cardKind}"]`).first();
+      await expect(card).toBeVisible({ timeout: 15_000 });
+      await card.click();
       await expect
         .poll(() => page.evaluate(() => window.__MARGINALIA_SMOKE_API__!.readerHighlightPaintCount()), {
           timeout: 60_000,

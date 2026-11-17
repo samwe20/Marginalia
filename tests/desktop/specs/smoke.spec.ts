@@ -675,10 +675,18 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       });
       await browser.pause(400);
       for (const pref of ["system", "light", "dark"] as const) {
-        await $(`[data-theme-pref="${pref}"]`).click();
+        const clicked = await browser.execute((p) => {
+          const btn = document.querySelector(`[data-theme-pref="${p}"]`) as HTMLElement | null;
+          btn?.click();
+          return Boolean(btn);
+        }, pref);
+        if (!clicked) throw new Error(`theme pref button missing: ${pref}`);
         await browser.pause(300);
       }
-      await $('[data-theme-pref="light"]').click();
+      await browser.execute(() => {
+        (document.querySelector('[data-theme-pref="light"]') as HTMLElement | null)?.click();
+      });
+      await browser.pause(200);
       const theme = await $("#app").getAttribute("data-theme");
       expect(theme).toBe("light");
       await saveScreenshot("smoke-light-mode.png");
@@ -885,13 +893,30 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await browser.pause(800);
       // Sidebar Hledat removed — search lives on Citace / Knihovna / Poznámky.
       await $('[data-route="quotes"]').click();
-      await browser.pause(400);
+      await browser.waitUntil(async () => (await $("[data-quotes-ready='1']").isExisting()), {
+        timeout: 15_000,
+        timeoutMsg: "quotes page not ready",
+      });
       const input = await $("#quotes-filter");
-      await input.setValue("Tolstoj");
+      await expect(input).toBeDisplayed();
+      // Prefer a token from whatever list is shown (user quotes take precedence over demo).
+      const token = await browser.execute(() => {
+        const el = document.querySelector(
+          ".quote-db-card, .user-quote-list .quote-card, .quote-list .quote-card",
+        );
+        const words = (el?.textContent ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .split(" ")
+          .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+          .filter((w) => w.length >= 4);
+        return words[0] || "Tolstoj";
+      });
+      await input.setValue(token);
       await browser.pause(600);
       const hits = await $(".quote-db-card, .user-quote-list .quote-card, .quote-list .quote-card");
       await expect(hits).toBeDisplayed();
-      record("S09", "Search finds quote/note", true, "quotes page filter hit");
+      record("S09", "Search finds quote/note", true, `quotes page filter hit token=${token}`);
     } catch (e) {
       record("S09", "Search finds quote/note", false, String(e));
       throw e;

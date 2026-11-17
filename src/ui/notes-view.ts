@@ -96,8 +96,10 @@ export async function renderNotesView(
       const q = (ev.target as HTMLInputElement).value.trim().toLowerCase();
       stageMain.querySelectorAll<HTMLElement>(".note-list-item").forEach((btn) => {
         const title = (btn.dataset.noteTitle || btn.textContent || "").toLowerCase();
+        const match = !q || title.includes(q);
+        btn.hidden = !match;
         const li = btn.closest("li");
-        if (li) li.style.display = !q || title.includes(q) ? "" : "none";
+        if (li) li.hidden = !match;
       });
     });
 

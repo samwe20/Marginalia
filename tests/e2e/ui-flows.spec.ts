@@ -42,15 +42,19 @@ test.describe("UI flows (web build)", () => {
 
   test("hledání na stránce Citace (ukázková data)", async ({ page }) => {
     await page.locator('.nav-item[data-route="quotes"]').click();
-    const input = page.locator("#quotes-filter, #search-input").first();
+    await expect(page.locator("[data-quotes-ready='1']")).toBeVisible();
+    const input = page.locator("#quotes-filter");
+    await expect(input).toBeVisible();
     await input.fill("Hamlet");
-    await expect(page.getByText(/hamlet/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".quote-db-card").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".quote-db-grid")).toContainText(/hamlet|být, či nebýt|shakespeare/i);
   });
 
   test("klávesová zkratka Ctrl+F fokuskuje hledání na stránce", async ({ page }) => {
     await page.locator('.nav-item[data-route="library"]').click();
-    await page.keyboard.press("Control+f");
+    await expect(page.locator("[data-library-ready='1']")).toBeVisible({ timeout: 15_000 });
     await expect(page.locator("#library-filter")).toBeVisible();
+    await page.keyboard.press("Control+f");
     await expect(page.locator("#library-filter")).toBeFocused();
   });
 

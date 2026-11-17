@@ -14,6 +14,8 @@ test.describe("search notes", () => {
     await expect(page.locator(".notes-layout")).toBeVisible();
     const input = page.locator("#notes-filter");
     await input.fill("esej");
-    await expect(page.locator(".note-list-item")).toContainText(/Esej/i, { timeout: 10_000 });
+    const visible = page.locator(".note-list-item:visible");
+    await expect(visible).toHaveCount(1, { timeout: 10_000 });
+    await expect(visible).toContainText(/Esej/i);
   });
 });
