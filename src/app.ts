@@ -27,7 +27,7 @@ import {
 } from "./lib/file-metadata";
 import { formatCitation, type CitationStyleId } from "./lib/citation-format";
 import { readBibliographyFromForm, renderReaderBibliographyFields } from "./ui/reader-bibliography";
-import { bindCoverImageFallbacks, renderBookCoverMarkup } from "./ui/book-cover";
+import { bindCoverImageFallbacks, upgradeBookCardCoversInPlace } from "./ui/book-cover";
 import { renderTypographicCoverHtml } from "./lib/typographic-cover";
 import { enqueueCoverGeneration, setCustomBookCover, coverImageUrl } from "./lib/book-cover-cache";
 import { bookSlug } from "./lib/paths";
@@ -601,23 +601,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const recent = await listBooksForLibrary();
     if (renderNonce !== libraryRenderNonce) return;
     const demoBooks = isDemoEnabled() ? getDemoBooks() : [];
-    const userCards = recent.length
-      ? (
-          await Promise.all(
-            recent.map(async (b) => {
-              const cover = state.libraryRoot
-                ? await renderBookCoverMarkup({
-                    libraryRoot: state.libraryRoot,
-                    slug: b.slug,
-                    title: b.title,
-                    author: b.author,
-                  })
-                : renderTypographicCoverHtml({
-                    slug: b.slug,
-                    title: b.title,
-                    author: b.author,
-                  });
-              return `
+    // Paint immediately with typographic covers so cards stay clickable; upgrade images in place.
+    const userCards = recent
+      .map((b) => {
+        const cover = renderTypographicCoverHtml({
+          slug: b.slug,
+          title: b.title,
+          author: b.author,
+        });
+        return `
               <button type="button" class="book-card" data-slug="${escapeAttr(b.slug)}" data-kind="${b.kind}"
                 data-file-path="${escapeAttr(b.filePath)}" data-sha256="${escapeAttr(b.sha256)}"
                 data-title="${escapeAttr(b.title)}" data-author="${escapeAttr(b.author)}"
@@ -626,13 +618,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 <div class="book-card__title">${escapeHtml(b.title)}</div>
                 <div class="book-card__meta">${escapeHtml(b.author || "—")} · ${b.kind.toUpperCase()}</div>
               </button>`;
-            }),
-          )
-        ).join("")
-      : "";
+      })
+      .join("");
     if (renderNonce !== libraryRenderNonce) return;
     stageMain.innerHTML = `
-      <div class="page">
+      <div class="page" data-library-ready="1">
         <h1>Knihovna</h1>
         <p class="page-intro">PDF, EPUB a MOBI/AZW ve složce knihovny se načítají automaticky. Citace a poznámky se ukládají do stejné knihovny.</p>
         <label class="field field--inline page-search">
@@ -684,14 +674,18 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const libFilter = stageMain.querySelector<HTMLInputElement>("#library-filter");
     libFilter?.addEventListener("input", () => {
       const q = libFilter.value.trim().toLowerCase();
-      stageMain.querySelectorAll<HTMLElement>(".book-card:not(.book-card--demo)").forEach((card) => {
-        const hay = `${card.dataset.title || ""} ${card.dataset.author || ""}`.toLowerCase();
-        card.style.display = !q || hay.includes(q) ? "" : "none";
+      stageMain.querySelectorAll<HTMLElement>(".book-card").forEach((card) => {
+        const hay = `${card.dataset.title || card.querySelector(".book-card__title")?.textContent || ""} ${
+          card.dataset.author || card.querySelector(".book-card__meta")?.textContent || ""
+        }`.toLowerCase();
+        card.hidden = Boolean(q && !hay.includes(q));
       });
     });
     if (state.libraryRoot && recent.length) {
+      const root = state.libraryRoot;
+      void upgradeBookCardCoversInPlace(stageMain, root);
       void enqueueCoverGeneration(
-        state.libraryRoot,
+        root,
         recent.map((b) => ({
           slug: b.slug,
           kind: b.kind,
@@ -701,7 +695,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           filePath: b.filePath,
         })),
         () => {
-          if (state.route === "library") void renderLibrary();
+          if (state.route === "library" && state.libraryRoot === root) {
+            void upgradeBookCardCoversInPlace(stageMain, root);
+          }
         },
       );
     }
@@ -779,14 +775,27 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
     const books = getDemoBooks();
     const allTags = [...new Set(getDemoQuotes().flatMap((q) => q.tags))].sort();
-    let quotes = getDemoQuotes();
-    if (state.quotesFilterBook) quotes = quotes.filter((q) => q.bookSlug === state.quotesFilterBook);
-    if (state.quotesFilterTag) quotes = quotes.filter((q) => q.tags.includes(state.quotesFilterTag));
-    if (state.quotesFilterText.trim()) {
-      const ids = new Set(searchDemoQuotes(state.quotesFilterText).map((q) => q.id));
-      quotes = quotes.filter((q) => ids.has(q.id));
-    }
     const bookMap = new Map(books.map((b) => [b.slug, b]));
+    const paintDemoQuotes = () => {
+      let quotes = getDemoQuotes();
+      if (state.quotesFilterBook) quotes = quotes.filter((q) => q.bookSlug === state.quotesFilterBook);
+      if (state.quotesFilterTag) quotes = quotes.filter((q) => q.tags.includes(state.quotesFilterTag));
+      if (state.quotesFilterText.trim()) {
+        const ids = new Set(searchDemoQuotes(state.quotesFilterText).map((q) => q.id));
+        quotes = quotes.filter((q) => ids.has(q.id));
+      }
+      const grid = stageMain.querySelector(".quote-db-grid");
+      const countEl = stageMain.querySelector(".results-count");
+      if (countEl) countEl.textContent = `${quotes.length} citací`;
+      if (grid) {
+        grid.innerHTML = quotes.map((q) => renderQuoteDbCard(q, bookMap.get(q.bookSlug))).join("");
+        bindDemoNavigation();
+      }
+      stageMain.querySelectorAll(".tag-chip--btn").forEach((btn) => {
+        const tag = (btn as HTMLElement).dataset.tag ?? "";
+        btn.classList.toggle("tag-chip--on", tag === state.quotesFilterTag);
+      });
+    };
     stageMain.innerHTML = `
       <div class="page page--wide" data-quotes-ready="1">
         <h1>Databáze citací</h1>
@@ -799,36 +808,34 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
               ${books.map((b) => `<option value="${escapeAttr(b.slug)}" ${state.quotesFilterBook === b.slug ? "selected" : ""}>${escapeHtml(b.title)}</option>`).join("")}
             </select>
           </label>
-          <label class="field field--inline">
-            <span>Hledat v citacích</span>
-            <input type="search" id="filter-text" value="${escapeAttr(state.quotesFilterText)}" placeholder="Text citace nebo poznámky…" />
+          <label class="field field--inline quotes-filter page-search">
+            <span class="sr-only">Hledat v citacích</span>
+            <input type="search" id="quotes-filter" value="${escapeAttr(state.quotesFilterText)}" placeholder="Hledat v citacích…" autocomplete="off" />
           </label>
         </div>
         <div class="tag-row tag-row--filter" role="group" aria-label="Filtr štítků">
           <button type="button" class="tag-chip tag-chip--btn ${state.quotesFilterTag === "" ? "tag-chip--on" : ""}" data-tag="">Vše</button>
           ${allTags.map((t) => `<button type="button" class="tag-chip tag-chip--btn ${state.quotesFilterTag === t ? "tag-chip--on" : ""}" data-tag="${escapeAttr(t)}">${escapeHtml(t)}</button>`).join("")}
         </div>
-        <p class="muted results-count">${quotes.length} citací</p>
-        <div class="quote-db-grid">
-          ${quotes.map((q) => renderQuoteDbCard(q, bookMap.get(q.bookSlug))).join("")}
-        </div>
+        <p class="muted results-count"></p>
+        <div class="quote-db-grid"></div>
       </div>`;
-    const rerender = () => void renderQuotesOverview();
     stageMain.querySelector<HTMLSelectElement>("#filter-book")?.addEventListener("change", (ev) => {
       state.quotesFilterBook = (ev.target as HTMLSelectElement).value;
-      rerender();
+      paintDemoQuotes();
     });
-    stageMain.querySelector<HTMLInputElement>("#filter-text")?.addEventListener("input", (ev) => {
-      state.quotesFilterText = (ev.target as HTMLInputElement).value;
-      rerender();
+    const filterInput = stageMain.querySelector<HTMLInputElement>("#quotes-filter");
+    filterInput?.addEventListener("input", () => {
+      state.quotesFilterText = filterInput.value;
+      paintDemoQuotes();
     });
     stageMain.querySelectorAll(".tag-chip--btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         state.quotesFilterTag = (btn as HTMLElement).dataset.tag ?? "";
-        rerender();
+        paintDemoQuotes();
       });
     });
-    bindDemoNavigation();
+    paintDemoQuotes();
   };
 
   const renderSettings = () => {
@@ -1547,10 +1554,8 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       ev.preventDefault();
       void promptOpenBook();
     }
-    if (ev.ctrlKey && ev.key.toLowerCase() === "f") {
-      ev.preventDefault();
-      setRoute("quotes");
-    }
+    // Ctrl+F focuses the in-page filter (library/quotes/notes) — see handler above.
+    // Do not route to a removed Search tab or force Citace.
     if (ev.key === "Escape" && state.route === "reader") {
       state.inspectorOpen = false;
       syncReadingChrome();

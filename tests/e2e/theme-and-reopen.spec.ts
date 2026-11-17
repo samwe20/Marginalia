@@ -24,8 +24,11 @@ test.describe("reopen recent book", () => {
     await page.locator("#file-open").setInputFiles(join(process.cwd(), "tests", "fixtures", "sample.pdf"));
     await expectPdfReaderTextReady(page);
     await page.locator("#btn-back-library").click();
-    await expect(page.locator('.book-card:not(.book-card--demo)')).toHaveCount(1, { timeout: 15_000 });
-    await page.locator(".book-card:not(.book-card--demo)").click();
+    await expect(page.locator("[data-library-ready='1']")).toBeVisible({ timeout: 15_000 });
+    const card = page.locator(".book-card:not(.book-card--demo)");
+    await expect(card).toHaveCount(1, { timeout: 15_000 });
+    await expect(card).toBeVisible();
+    await card.click();
     await expectPdfReaderTextReady(page);
   });
 });
