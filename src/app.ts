@@ -59,7 +59,7 @@ import {
   resetFolderPickerInvocationCount,
 } from "./lib/library-root-telemetry";
 import { createNote } from "./lib/notes";
-import { renderUserQuoteCardHtml } from "./ui/user-quote-card";
+import { bindQuoteMetaToggles, expandFirstQuoteMeta, renderUserQuoteCardHtml } from "./ui/user-quote-card";
 import type { initThemePreference } from "./ui/theme-preference";
 import { PdfReader, attachPdfPageCounter } from "./readers/pdf-reader";
 import { EpubReader } from "./readers/epub-reader";
@@ -470,11 +470,13 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
           bookAuthorFallback: bookAuthor,
           bookTitleFallback: bookTitle,
           bibliography: state.bibliography,
+          collapseMeta: true,
           listAttrs: { "data-book-slug": d.meta.book_slug },
         }),
       )
       .join("")}</ul>`;
     bindQuoteCommentEditors(inspectorBody);
+    bindQuoteMetaToggles(inspectorBody);
     bindQuoteCitationCopy(inspectorBody);
   };
 
@@ -1498,6 +1500,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       epub?.refreshTheme?.();
     },
     triggerCopyCitation: async (style: CitationStyleId) => {
+      expandFirstQuoteMeta(inspectorBody);
+      const cite = inspectorBody.querySelector(".quote-card__cite") as HTMLDetailsElement | null;
+      if (cite) cite.open = true;
       const btn = inspectorBody.querySelector(`[data-copy-citation="${style}"]`) as HTMLButtonElement | null;
       if (!btn) throw new Error(`No citation button for ${style}`);
       btn.click();

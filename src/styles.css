@@ -1082,12 +1082,71 @@ body.setup-modal-open .workspace {
   background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
 }
 
+.quote-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
 .quote-card__page {
   font-size: 0.68rem;
   color: var(--faint);
   margin-bottom: 0.2rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.quote-card__head .quote-card__page {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.quote-card__meta-toggle {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.quote-card__meta-toggle:hover {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+
+.quote-card__meta-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.quote-card__chevron {
+  display: block;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 160ms ease;
+}
+
+.quote-card__meta-toggle[aria-expanded="true"] .quote-card__chevron {
+  transform: rotate(45deg);
+}
+
+.quote-card__meta-panel {
+  margin-top: 0.45rem;
+}
+
+.quote-card__meta-panel[hidden] {
+  display: none !important;
 }
 
 .quote-card__text {
@@ -1101,6 +1160,10 @@ body.setup-modal-open .workspace {
   margin-top: 0.5rem;
   flex-wrap: wrap;
   gap: 0.3rem;
+}
+
+.quote-card__meta-panel .quote-card__meta {
+  margin-top: 0;
 }
 
 .tag-chip--meta {

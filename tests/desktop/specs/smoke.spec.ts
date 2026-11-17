@@ -62,6 +62,20 @@ async function ensureInspectorOpen() {
   }
 }
 
+/** Reader inspector: expand collapsed quote metadata (chips + Kopírovat citaci). */
+async function expandInspectorQuoteMeta(cardSelector = "#inspector-body .quote-card") {
+  const card = await $(cardSelector);
+  await expect(card).toBeDisplayed();
+  const toggle = await card.$(".quote-card__meta-toggle");
+  if (!(await toggle.isExisting())) return;
+  const expanded = (await toggle.getAttribute("aria-expanded")) === "true";
+  if (!expanded) {
+    await toggle.click();
+    await browser.pause(200);
+  }
+  await expect(card.$(".quote-card__meta-panel")).toBeDisplayed();
+}
+
 function clampTopViewport(
   rect: { x: number; y: number; x2: number; y2: number },
   inner: { width: number; height: number },
@@ -1066,11 +1080,18 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const files = await quoteFilesOnDisk(slug);
       const quoteId = files[files.length - 1].replace(/\.md$/, "");
       await expect($("#inspector-body .quote-card__text")).toBeDisplayed();
+      // Metadata chips / Kopírovat citaci are collapsed by default in the reader.
+      await expect($("#inspector-body .quote-card__meta-panel")).not.toBeDisplayed();
+      await expandInspectorQuoteMeta();
+      await expect($("#inspector-body .tag-chip--meta")).toBeDisplayed();
       await expect($("#pdf-root mark.quote-highlight")).toBeExisting();
       await openQuotesTab();
       await expect($(`[data-user-quote="${quoteId}"]`)).toBeDisplayed();
+      // Quotes page keeps metadata visible (no collapse).
+      await expect($(`[data-user-quote="${quoteId}"] .tag-chip--meta`)).toBeDisplayed();
       await openPdfFromLibraryCard();
       await ensureInspectorOpen();
+      await expandInspectorQuoteMeta();
       const panelText = await $("#inspector-body .quote-card__text").getText();
       if (!panelText.includes("Marginalia")) throw new Error(`unexpected quote text: ${panelText}`);
       record("S14", "PDF citace po H (UI)", true, quoteId);
@@ -1186,6 +1207,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         throw new Error(`author not in knihy/${slug}.md`);
       }
       await ensureInspectorOpen();
+      await expandInspectorQuoteMeta();
       const chip = await $("#inspector-body .tag-chip--meta[title='Autor']");
       await expect(chip).toBeDisplayed();
       const chipText = await chip.getText();
@@ -1385,6 +1407,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         files = await quoteFilesOnDisk(slug);
       }
       if (!files.length) throw new Error("no quote for citation copy");
+      await expandInspectorQuoteMeta();
+      const citeSummary = await $("#inspector-body .quote-card__cite-summary");
+      if (await citeSummary.isExisting()) {
+        await citeSummary.click();
+        await browser.pause(200);
+      }
       const cite = (await callSmokeApi<string>("triggerCopyCitation", "informal")) ?? "";
       if (!cite.includes("„") && !cite.includes("Fixture") && !cite.includes("Smoke")) {
         throw new Error(`unexpected citation: ${cite}`);
@@ -1944,6 +1972,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const md = await readLibraryText(`citace/${slug}/${files[0]}`);
       if (!md.includes(liveTitle)) throw new Error(`old quote md missing live title: ${md.slice(0, 240)}`);
       await ensureInspectorOpen();
+      await expandInspectorQuoteMeta();
       const chip = await browser.execute((title) => {
         const chips = Array.from(document.querySelectorAll(".inspector-quote-list .tag-chip"));
         return chips.some((c) => (c.textContent ?? "").includes(title));
@@ -2097,5 +2126,50 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   });
+
+  it("S39 reader: metadata citace sbalená, chevron rozbalí/sbalí", async () => {
+    try {
+      await openPdfFromLibraryCard();
+      await ensureInspectorOpen();
+      const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("pdf"));
+      let files = await quoteFilesOnDisk(slug);
+      if (!files.length) {
+        await pointerSelectPdfText();
+        await pressHighlightSaveKey();
+        await browser.waitUntil(async () => (await quoteFilesOnDisk(slug)).length > 0, {
+          timeout: 20_000,
+          timeoutMsg: "quote for meta toggle",
+        });
+        files = await quoteFilesOnDisk(slug);
+      }
+      await ensureInspectorOpen();
+      const card = await $("#inspector-body .quote-card");
+      await expect(card).toBeDisplayed();
+      await expect(card.$(".quote-card__text")).toBeDisplayed();
+      await expect(card.$(".quote-card__page")).toBeDisplayed();
+      const toggle = await card.$(".quote-card__meta-toggle");
+      await expect(toggle).toBeDisplayed();
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      await expect(card.$(".quote-card__meta-panel")).not.toBeDisplayed();
+      await expect(card.$(".tag-chip--meta")).not.toBeDisplayed();
+
+      await toggle.click();
+      await browser.pause(250);
+      expect(await toggle.getAttribute("aria-expanded")).toBe("true");
+      await expect(card.$(".quote-card__meta-panel")).toBeDisplayed();
+      await expect(card.$(".tag-chip--meta")).toBeDisplayed();
+      await saveScreenshot("smoke-quote-meta-expanded.png");
+
+      await toggle.click();
+      await browser.pause(250);
+      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      await expect(card.$(".quote-card__meta-panel")).not.toBeDisplayed();
+      await saveScreenshot("smoke-quote-meta-collapsed.png");
+      record("S39", "Reader metadata citace chevron", true);
+    } catch (e) {
+      record("S39", "Reader metadata citace chevron", false, String(e));
+      throw e;
+    }
+  }).timeout(180_000);
 
 });
