@@ -78,7 +78,7 @@ async function pointerDragViewport(fromX: number, fromY: number, toX: number, to
 }
 
 async function pointerSelectPdfText(): Promise<void> {
-  const rect = (await browser.execute(function selectPdfTextRect() {
+  const rect = (await browser.execute(function () {
     const span = document.querySelector("#pdf-root .textLayer span");
     if (!span) return null;
     const r = span.getBoundingClientRect();
@@ -95,47 +95,47 @@ async function pointerSelectPdfText(): Promise<void> {
 }
 
 async function pointerSelectEpubText(): Promise<void> {
-  const rect = (await browser.execute(function selectEpubTextRect() {
-    const roots = [];
-    const visit = function visitRoot(root) {
-      if (!root) return;
+  const rect = (await browser.execute(function () {
+    var roots = [];
+    var stack = [document.querySelector("#epub-root")];
+    while (stack.length) {
+      var root = stack.pop();
+      if (!root) continue;
       roots.push(root);
-      const owned = root.querySelectorAll ? root.querySelectorAll("*") : [];
-      for (let i = 0; i < owned.length; i++) {
-        const el = owned[i];
-        if (el.shadowRoot) visit(el.shadowRoot);
+      var owned = root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (var o = 0; o < owned.length; o++) {
+        if (owned[o].shadowRoot) stack.push(owned[o].shadowRoot);
       }
-    };
-    visit(document.querySelector("#epub-root"));
-    for (let r = 0; r < roots.length; r++) {
-      const iframes = roots[r].querySelectorAll ? roots[r].querySelectorAll("iframe") : [];
-      for (let i = 0; i < iframes.length; i++) {
+    }
+    for (var r = 0; r < roots.length; r++) {
+      var iframes = roots[r].querySelectorAll ? roots[r].querySelectorAll("iframe") : [];
+      for (var f = 0; f < iframes.length; f++) {
         try {
-          const doc = iframes[i].contentDocument;
+          var doc = iframes[f].contentDocument;
           if (doc) roots.push(doc);
         } catch {
           /* cross-origin */
         }
       }
     }
-    const candidates = [];
-    for (let r = 0; r < roots.length; r++) {
-      const nodes = roots[r].querySelectorAll ? roots[r].querySelectorAll("p, span, div") : [];
-      for (let i = 0; i < nodes.length; i++) candidates.push(nodes[i]);
-    }
-    for (let i = 0; i < candidates.length; i++) {
-      const el = candidates[i];
-      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (text.length < 8) continue;
-      if (!/Marginalia|fixture|paragraph/i.test(text)) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < 8 || r.height < 4) continue;
-      return {
-        x: Math.floor(r.left + 6),
-        y: Math.floor(r.top + r.height / 2),
-        x2: Math.floor(r.right - 6),
-        y2: Math.floor(r.top + r.height / 2),
-      };
+    for (var ri = 0; ri < roots.length; ri++) {
+      var nodes = roots[ri].querySelectorAll ? roots[ri].querySelectorAll("p, span") : [];
+      for (var ni = 0; ni < nodes.length; ni++) {
+        var el = nodes[ni];
+        var text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (text.length < 8) continue;
+        if (text.indexOf("Marginalia") < 0 && text.indexOf("fixture") < 0 && text.indexOf("paragraph") < 0) {
+          continue;
+        }
+        var box = el.getBoundingClientRect();
+        if (box.width < 8 || box.height < 4) continue;
+        return {
+          x: Math.floor(box.left + 6),
+          y: Math.floor(box.top + box.height / 2),
+          x2: Math.floor(box.right - 6),
+          y2: Math.floor(box.top + box.height / 2),
+        };
+      }
     }
     return null;
   })) as { x: number; y: number; x2: number; y2: number } | null;
@@ -149,7 +149,7 @@ async function pressHighlightSaveKey() {
 }
 
 async function clickReaderChromeAwayFromText() {
-  const pt = (await browser.execute(function readerToolbarPoint() {
+  const pt = (await browser.execute(function () {
     const bar = document.querySelector(".reader-toolbar");
     if (!bar) return null;
     const r = bar.getBoundingClientRect();
