@@ -38,20 +38,25 @@ export function attachHighlighter(
   let anchorRange: Range | null = null;
   let activePointer: number | null = null;
   let pendingRange: Range | null = null;
+  const ownerDoc = () => root.ownerDocument ?? document;
+  const getSelection = () => ownerDoc().getSelection();
 
   const clearPending = () => {
     pendingRange = null;
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
+    getSelection()?.removeAllRanges();
   };
 
   const commitPending = (): boolean => {
     if (mode() !== "highlight") return false;
-    const range = pendingRange;
+    let range = pendingRange;
+    if (!range || range.collapsed) {
+      const sel = getSelection();
+      range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    }
     if (!range || range.collapsed) return false;
     onComplete(range, { pointerType: "keyboard" });
     pendingRange = null;
-    window.getSelection()?.removeAllRanges();
+    getSelection()?.removeAllRanges();
     return true;
   };
 
@@ -71,9 +76,9 @@ export function attachHighlighter(
     if (activePointer !== ev.pointerId || !anchorRange) return;
     const head = getRangeFromPoint(ev.clientX, ev.clientY);
     if (!head) return;
-    const sel = window.getSelection();
+    const sel = getSelection();
     if (!sel) return;
-    const range = document.createRange();
+    const range = ownerDoc().createRange();
     const forward =
       anchorRange.compareBoundaryPoints(Range.START_TO_START, head) <= 0;
     if (forward) {
@@ -89,7 +94,7 @@ export function attachHighlighter(
 
   const onPointerUp = (ev: PointerEvent) => {
     if (activePointer !== ev.pointerId) return;
-    const sel = window.getSelection();
+    const sel = getSelection();
     const range = sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
     if (range && !range.collapsed) {
       pendingRange = range;
@@ -131,7 +136,7 @@ export function rangeToOffsets(
   root: HTMLElement,
   range: Range,
 ): { start: number; end: number; text: string } {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let offset = 0;
   let start = -1;
   let end = -1;
