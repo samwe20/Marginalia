@@ -77,6 +77,29 @@ async function pointerDragViewport(fromX: number, fromY: number, toX: number, to
   await browser.releaseActions();
 }
 
+async function pointerDragOnElement(
+  element: WebdriverIO.Element,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+) {
+  await browser.performActions([
+    {
+      type: "pointer",
+      id: "finger1",
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, origin: element as unknown as object, x: fromX, y: fromY },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", duration: 280, origin: element as unknown as object, x: toX, y: toY },
+        { type: "pointerUp", button: 0 },
+      ],
+    },
+  ]);
+  await browser.releaseActions();
+}
+
 async function pointerSelectPdfText(): Promise<void> {
   const rect = (await browser.execute(function () {
     const span = document.querySelector("#pdf-root .textLayer span");
@@ -94,8 +117,38 @@ async function pointerSelectPdfText(): Promise<void> {
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
-async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: number; y2: number }> {
+async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: number; y2: number; space: string }> {
   await callSmokeApi<number>("ensureEpubReaderReady");
+  const renderInfo = await callSmokeApi<{ mode: string }>("epubReaderRenderInfo");
+  if (renderInfo.mode === "iframe") {
+    const iframe = await $("#epub-root iframe");
+    await iframe.waitForExist({ timeout: 15_000 });
+    await browser.switchToFrame(iframe);
+    const block = (await $("p, span, body")) as WebdriverIO.Element;
+    const local = (await browser.execute(function () {
+      const p = document.querySelector("p, span");
+      if (!p) return null;
+      const r = p.getBoundingClientRect();
+      if (r.width < 8) return null;
+      return {
+        x: 6,
+        y: Math.floor(r.height / 2),
+        x2: Math.floor(r.width - 6),
+        y2: Math.floor(r.height / 2),
+      };
+    })) as { x: number; y: number; x2: number; y2: number } | null;
+    if (!local) {
+      await browser.switchToFrame(null);
+      throw new Error("EPUB iframe text block missing for pointer selection");
+    }
+    await pointerDragOnElement(block, local.x, local.y, local.x2, local.y2);
+    await browser.switchToFrame(null);
+    let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
+      "epubPointerSelectionRect",
+    );
+    if (!rect) rect = local;
+    return { ...rect, space: "iframe" };
+  }
   let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
   );
@@ -107,10 +160,17 @@ async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: numb
   }
   if (!rect) throw new Error("EPUB/MOBI reader text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-  return rect;
+  return { ...rect, space: renderInfo.mode === "fallback" ? "fallback" : "viewport" };
 }
 
 async function pressHighlightSaveKey() {
+  await browser.execute(function () {
+    const app = document.getElementById("app");
+    (app ?? document.body).focus();
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+    document.body.focus();
+  });
   await browser.keys(["H"]);
   await browser.pause(400);
 }

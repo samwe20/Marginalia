@@ -54,7 +54,38 @@ export class EpubReader {
     for (const handle of this.highlights) {
       if (handle.commitPending()) return true;
     }
+    const live = this.findLiveSelectionRange();
+    if (live && this.applyHighlightRange(live)) return true;
     return false;
+  }
+
+  private findLiveSelectionRange(): Range | null {
+    for (const doc of this.contentDocuments()) {
+      const r = doc.getSelection()?.rangeCount ? doc.getSelection()!.getRangeAt(0) : null;
+      if (r && !r.collapsed && r.toString().trim()) return r.cloneRange();
+    }
+    const r = window.getSelection()?.rangeCount ? window.getSelection()!.getRangeAt(0) : null;
+    if (!r || r.collapsed || !r.toString().trim()) return null;
+    const node = r.commonAncestorContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    if (el && this.opts.container.contains(el)) return r.cloneRange();
+    return null;
+  }
+
+  private applyHighlightRange(range: Range): boolean {
+    const view = this.view;
+    if (!view || this.opts.getMode() !== "highlight") return false;
+    const root = this.offsetRootForRange(range);
+    if (!root) return false;
+    const { start, end, text } = rangeToOffsets(root, range);
+    if (!text.trim()) return false;
+    const cfi = view.getCFI?.(range) ?? `/0/0`;
+    const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+    void this.opts.onHighlight({ text, cfi, anchor });
+    this.paintHighlight(range);
+    range.startContainer.ownerDocument?.getSelection()?.removeAllRanges();
+    window.getSelection()?.removeAllRanges();
+    return true;
   }
 
   private wireHighlighter(): void {
@@ -64,13 +95,7 @@ export class EpubReader {
     this.highlights = [];
     const roots = this.collectPointerRoots();
     const onComplete = (range: Range) => {
-      const root = this.offsetRootForRange(range);
-      if (!root) return;
-      const { start, end, text } = rangeToOffsets(root, range);
-      const cfi = view.getCFI?.(range) ?? `/0/0`;
-      const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
-      this.opts.onHighlight({ text, cfi, anchor });
-      this.paintHighlight(range);
+      this.applyHighlightRange(range);
     };
     for (const root of roots) {
       this.highlights.push(
