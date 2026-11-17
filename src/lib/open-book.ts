@@ -1,3 +1,4 @@
+import { DIALOG_BOOK_EXTENSIONS, mimeForBookFileName } from "./book-formats";
 import { isTauri } from "./runtime";
 
 let dialogOpenReachable = false;
@@ -30,14 +31,9 @@ export async function smokeVerifyDialogPlugin(): Promise<{ ok: boolean; detail: 
   }
 }
 
-const BOOK_FILTERS = [{ name: "Knihy", extensions: ["pdf", "epub"] as string[] }];
-
-function mimeForName(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".pdf")) return "application/pdf";
-  if (lower.endsWith(".epub")) return "application/epub+zip";
-  return "application/octet-stream";
-}
+const BOOK_FILTERS = [
+  { name: "Knihy", extensions: [...DIALOG_BOOK_EXTENSIONS] as string[] },
+];
 
 /** Desktop: native file picker; web: returns null (use hidden `<input type="file">`). */
 export async function pickBookFileViaDialog(): Promise<File | null> {
@@ -57,7 +53,7 @@ export async function pickBookFileViaDialog(): Promise<File | null> {
   const { readFile } = await import("@tauri-apps/plugin-fs");
   const bytes = await readFile(path);
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return new File([buffer], name, { type: mimeForName(name) });
+  return new File([buffer], name, { type: mimeForBookFileName(name) });
 }
 
 export function triggerWebFilePicker(input: HTMLInputElement): void {

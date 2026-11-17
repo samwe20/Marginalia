@@ -1,7 +1,7 @@
 {
   "name": "marginalia",
   "private": true,
-  "version": "0.1.0-prototype.5",
+  "version": "0.1.0-prototype.6",
   "description": "Private Windows app for book highlights and Markdown quotes (Tauri 2).",
   "repository": {
     "type": "git",
@@ -24,6 +24,8 @@
     "test:desktop-smoke": "wdio run tests/desktop/wdio.conf.cjs"
   },
   "dependencies": {
+    "@citation-js/core": "^0.7.18",
+    "@citation-js/plugin-csl": "^0.7.14",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
@@ -58,7 +60,7 @@
     "@wdio/spec-reporter": "^9.20.0",
     "@wdio/tauri-service": "^1.5.1",
     "jsdom": "^26.1.0",
-    "jszip": "^3.10.1",
+    "jszip": "^3.10.2",
     "ts-node": "^10.9.2",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",

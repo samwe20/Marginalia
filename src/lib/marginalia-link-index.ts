@@ -6,6 +6,7 @@ import { listNotes } from "./notes";
 import type { NoteMeta } from "../types/folio";
 import { bookIndexPath, noteIndexPath, quoteIndexPath } from "./marginalia-paths";
 import { isTauri } from "./runtime";
+import { loadAllQuotesFromLibrary } from "./storage";
 
 function metaFromBook(b: DemoBook): NoteMeta {
   const path = bookIndexPath(b.slug);
@@ -83,6 +84,20 @@ export async function rebuildMarginaliaLinkIndex(
   const notes = await listNotes(libraryRoot);
   for (const n of notes) metas.push(metaFromLibraryNote(n));
 
+  const libraryQuotes = libraryRoot ? await loadAllQuotesFromLibrary(libraryRoot) : [];
+  for (const q of libraryQuotes) {
+    const path = quoteIndexPath(q.meta.id);
+    metas.push({
+      id: q.meta.id,
+      title: q.meta.id,
+      path,
+      relativePath: path,
+      mtime: Date.parse(q.meta.updated),
+      createdAt: Date.parse(q.meta.created),
+      kind: "quote",
+    });
+  }
+
   const dedup = new Map<string, NoteMeta>();
   for (const m of metas) dedup.set(m.path, m);
   index.setNotes([...dedup.values()]);
@@ -117,6 +132,16 @@ export async function rebuildMarginaliaLinkIndex(
     for (const n of getDemoNotes()) index.setContent(noteIndexPath(n.filename), n.body);
   }
   for (const n of notes) index.setContent(noteIndexPath(n.filename), n.body);
+  for (const q of libraryQuotes) {
+    const body = q.comment.trim() ? q.comment : `> ${q.quoteText}`;
+    const path = quoteIndexPath(q.meta.id);
+    index.setContent(path, body);
+    const m = dedup.get(path);
+    if (m) {
+      index.registerAlias(q.meta.id, m);
+      if (q.meta.book_title.trim()) index.registerAlias(`${q.meta.book_title} — citace`, m);
+    }
+  }
 
   if (isTauri()) {
     try {

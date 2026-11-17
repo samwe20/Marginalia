@@ -92,8 +92,13 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
+          $baseVersion = $version.Split("-")[0]
           $shortSha = "${{ github.sha }}".Substring(0, 7)
-          $fileName = "Marginalia-$version-test-$shortSha-setup.exe"
+          if ("${{ github.head_ref }}" -eq "cursor/integration-all-d744") {
+            $fileName = "Marginalia-$baseVersion-test-integration-$shortSha-setup.exe"
+          } else {
+            $fileName = "Marginalia-$version-test-$shortSha-setup.exe"
+          }
           $setup = Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (-not $setup) { throw "NSIS setup missing" }
           Copy-Item $setup.FullName $fileName
@@ -112,7 +117,8 @@ jobs:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
     needs: windows-build
     runs-on: windows-latest
-    timeout-minutes: 45
+    # Suite self-aborts at 35m; keep the job ceiling close so a hung runner fails fast.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -150,6 +156,43 @@ jobs:
           name: desktop-smoke-${{ needs.windows-build.outputs.short_sha }}
           path: test-results/desktop-smoke
           if-no-files-found: warn
+  windows-pr-test-release:
+    # Jan: publish an exe only from the all-PR integration branch after installed smoke is green.
+    if: github.event_name == 'pull_request' && github.head_ref == 'cursor/integration-all-d744'
+    needs: [windows-build, windows-installed-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.windows-build.outputs.installer_artifact }}
+          path: installer
+      - name: Publish PR test installer (direct .exe asset)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLER_FILE: ${{ needs.windows-build.outputs.installer_file }}
+          APP_VERSION: ${{ needs.windows-build.outputs.version }}
+          SHORT_SHA: ${{ needs.windows-build.outputs.short_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          TAG="pr-${PR_NUMBER}-test"
+          TITLE="Marginália ${APP_VERSION} test (PR #${PR_NUMBER} @ ${SHORT_SHA})"
+          NOTES="Striktní installed-app smoke prošel. Přímý asset: \`${INSTALLER_FILE}\` — PR #${PR_NUMBER}, commit ${{ github.sha }}."
+          ASSET="installer/${INSTALLER_FILE}"
+          test -f "$ASSET"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --title "$TITLE" --notes "$NOTES"
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" "$ASSET" \
+              --prerelease \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --target "${{ github.sha }}"
+          fi
   windows-develop-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     needs: [windows-build, windows-installed-smoke]

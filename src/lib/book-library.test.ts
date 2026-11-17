@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mergeLibraryEntries, persistBookFile, readBookBytes } from "./book-library";
+import { mergeLibraryEntries, parseBookCardYaml, persistBookFile, readBookBytes } from "./book-library";
 
 describe("book-library", () => {
   beforeEach(() => {
@@ -14,6 +14,14 @@ describe("book-library", () => {
       },
       key: (i: number) => [...store.keys()][i] ?? null,
     });
+  });
+
+  it("parses book card without closing --- fence", () => {
+    const card = parseBookCardYaml(
+      '---\n\ntitle: "Fixture"\nauthor: "Smoke Autor"\nsha256: abc\npath: "C:\\\\lib\\\\sample.pdf"\nupdated: 2026-01-01\n\n',
+    );
+    expect(card?.author).toBe("Smoke Autor");
+    expect(card?.path).toContain("sample.pdf");
   });
 
   it("merges disk library cards with recent order", () => {

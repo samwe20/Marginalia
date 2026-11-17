@@ -40,19 +40,22 @@ test.describe("UI flows (web build)", () => {
     await expect(page.locator("#note-backlinks-pane .backlinks-header")).toBeVisible();
   });
 
-  test("globální hledání (ukázková data)", async ({ page }) => {
-    await page.locator('.nav-item[data-route="search"]').click();
-    const input = page.locator("#search-input");
+  test("hledání na stránce Citace (ukázková data)", async ({ page }) => {
+    await page.locator('.nav-item[data-route="quotes"]').click();
+    await expect(page.locator("[data-quotes-ready='1']")).toBeVisible();
+    const input = page.locator("#quotes-filter");
+    await expect(input).toBeVisible();
     await input.fill("Hamlet");
-    await input.press("Enter");
-    await expect(page.locator("#search-results .quote-db-card").first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/hamlet/i).first()).toBeVisible();
+    await expect(page.locator(".quote-db-card").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator(".quote-db-grid")).toContainText(/hamlet|být, či nebýt|shakespeare/i);
   });
 
-  test("klávesová zkratka Ctrl+F otevře hledání", async ({ page }) => {
+  test("klávesová zkratka Ctrl+F fokuskuje hledání na stránce", async ({ page }) => {
     await page.locator('.nav-item[data-route="library"]').click();
+    await expect(page.locator("[data-library-ready='1']")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("#library-filter")).toBeVisible();
     await page.keyboard.press("Control+f");
-    await expect(page.locator("#search-input")).toBeVisible();
+    await expect(page.locator("#library-filter")).toBeFocused();
   });
 
   test("světlý/tmavý režim (data-theme)", async ({ page }) => {
@@ -80,8 +83,9 @@ test.describe("wikilinks — chybějící cíl", () => {
     });
     await page.locator('.nav-item[data-route="notes"]').click();
     await page.getByRole("button", { name: "Otevřené otázky" }).click();
-    await expect(page.locator('.preview-root a.wiki-link.missing[data-wiki-title="Neexistující pojem"]')).toBeVisible();
-    await page.locator('.preview-root a.wiki-link.missing[data-wiki-title="Neexistující pojem"]').click();
+    const missing = page.locator(".cm-wiki-link.missing", { hasText: "Neexistující pojem" });
+    await expect(missing).toBeVisible();
+    await missing.dblclick();
     await expect(page.getByRole("button", { name: "Neexistující pojem" })).toBeVisible({ timeout: 15_000 });
   });
 });

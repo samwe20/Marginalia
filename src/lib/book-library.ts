@@ -1,3 +1,10 @@
+import { detectBookFileKind } from "./book-formats";
+import {
+  type BookBibliography,
+  emptyBibliography,
+  formatAuthorsDisplay,
+  migrateBibliographyFromCard,
+} from "./book-bibliography";
 import { bookCardPath, bookSlug } from "./paths";
 import type { BookMeta } from "./storage";
 import { isTauri } from "./runtime";
@@ -8,11 +15,13 @@ export interface ParsedBookCard {
   sha256: string;
   path: string;
   updated: string;
+  bibliography: BookBibliography;
+  bibliographyUserEdited: boolean;
 }
 
 export interface LibraryBookEntry {
   slug: string;
-  kind: "pdf" | "epub";
+  kind: "pdf" | "epub" | "mobi";
   title: string;
   author: string;
   sha256: string;
@@ -52,7 +61,7 @@ export async function listLibraryBooksFromDisk(libraryRoot: string): Promise<Lib
       const text = await readTextFile(`${dir}/${e.name}`);
       const card = parseBookCardYaml(text);
       if (!card?.path) continue;
-      const kind: "pdf" | "epub" = card.path.toLowerCase().endsWith(".epub") ? "epub" : "pdf";
+      const kind: "pdf" | "epub" | "mobi" = detectBookFileKind(card.path) ?? "pdf";
       books.push({
         slug,
         kind,
@@ -71,33 +80,68 @@ export async function listLibraryBooksFromDisk(libraryRoot: string): Promise<Lib
 }
 
 function bookExt(name: string): string {
-  const m = name.toLowerCase().match(/\.(pdf|epub)$/);
-  return m ? `.${m[1]}` : ".pdf";
+  const lower = name.toLowerCase();
+  const m = lower.match(/\.(pdf|epub|mobi|azw3?)$/);
+  if (!m) return ".pdf";
+  if (m[1]!.startsWith("azw")) return `.${m[1]}`;
+  return `.${m[1]}`;
 }
 
 function binaryStorageKey(slug: string, ext: string): string {
   return `marginalia:bookbin:${slug}${ext}`;
 }
 
+function pickScalar(yamlBody: string, key: string): string {
+  const line = yamlBody.split("\n").find((l) => l.startsWith(`${key}:`));
+  if (!line) return "";
+  const raw = line.slice(key.length + 1).trim();
+  try {
+    return JSON.parse(raw) as string;
+  } catch {
+    return raw.replace(/^"|"$/g, "");
+  }
+}
+
+function pickBool(yamlBody: string, key: string): boolean {
+  const v = pickScalar(yamlBody, key);
+  return v === "true";
+}
+
+function pickBibliographyJson(yamlBody: string): BookBibliography | null {
+  const line = yamlBody.split("\n").find((l) => l.startsWith("bibliography:"));
+  if (!line) return null;
+  const raw = line.slice("bibliography:".length).trim();
+  try {
+    const parsed = JSON.parse(raw) as BookBibliography;
+    return { ...emptyBibliography(), ...parsed, authors: parsed.authors?.length ? parsed.authors : emptyBibliography().authors };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeBookCardYaml(card: ParsedBookCard): string {
+  const author = card.author.trim() || formatAuthorsDisplay(card.bibliography.authors);
+  const bibJson = JSON.stringify(card.bibliography);
+  return `---\n\ntitle: ${JSON.stringify(card.title)}\nauthor: ${JSON.stringify(author)}\nsha256: ${card.sha256}\npath: ${JSON.stringify(card.path)}\nupdated: ${card.updated}\nbibliography: ${bibJson}\nbibliography_user_edited: ${card.bibliographyUserEdited ? "true" : "false"}\n\n`;
+}
+
 export function parseBookCardYaml(content: string): ParsedBookCard | null {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
-  const pick = (key: string) => {
-    const line = m[1].split("\n").find((l) => l.startsWith(`${key}:`));
-    if (!line) return "";
-    const raw = line.slice(key.length + 1).trim();
-    try {
-      return JSON.parse(raw) as string;
-    } catch {
-      return raw.replace(/^"|"$/g, "");
-    }
-  };
+  const closed = content.match(/^---\n([\s\S]*?)\n---/);
+  const open = closed ?? content.match(/^---\n([\s\S]*)$/);
+  if (!open) return null;
+  const body = open[1];
+  const title = pickScalar(body, "title");
+  const author = pickScalar(body, "author");
+  const bibRaw = pickBibliographyJson(body);
+  const bibliography = migrateBibliographyFromCard(title, author, bibRaw);
   return {
-    title: pick("title"),
-    author: pick("author"),
-    sha256: pick("sha256"),
-    path: pick("path"),
-    updated: pick("updated"),
+    title,
+    author: author || formatAuthorsDisplay(bibliography.authors),
+    sha256: pickScalar(body, "sha256"),
+    path: pickScalar(body, "path"),
+    updated: pickScalar(body, "updated"),
+    bibliography,
+    bibliographyUserEdited: pickBool(body, "bibliography_user_edited"),
   };
 }
 
@@ -112,18 +156,72 @@ export async function loadBookCard(libraryRoot: string, slug: string): Promise<P
   return text ? parseBookCardYaml(text) : null;
 }
 
-export async function updateBookCardPath(libraryRoot: string, slug: string, newPath: string): Promise<void> {
-  const card = await loadBookCard(libraryRoot, slug);
-  if (!card) return;
-  const now = new Date().toISOString();
-  const body = `---\n\ntitle: ${JSON.stringify(card.title)}\nauthor: ${JSON.stringify(card.author)}\nsha256: ${card.sha256}\npath: ${JSON.stringify(newPath)}\nupdated: ${now}\n\n`;
+export async function saveBookCard(libraryRoot: string, slug: string, card: ParsedBookCard): Promise<void> {
   const path = bookCardPath(libraryRoot, slug);
+  const body = serializeBookCardYaml(card);
   if (isTauri()) {
     const { writeTextFile } = await import("@tauri-apps/plugin-fs");
     await writeTextFile(path, body);
     return;
   }
   localStorage.setItem(`marginalia:${path}`, body);
+}
+
+export async function updateBookCardAuthor(
+  libraryRoot: string,
+  slug: string,
+  author: string,
+): Promise<void> {
+  const card =
+    (await loadBookCard(libraryRoot, slug)) ??
+    ({
+      title: slug,
+      author: "",
+      sha256: "",
+      path: "",
+      updated: "",
+      bibliography: emptyBibliography(),
+      bibliographyUserEdited: false,
+    } satisfies ParsedBookCard);
+  card.author = author.trim();
+  card.bibliography = migrateBibliographyFromCard(card.title, author, card.bibliography);
+  card.bibliographyUserEdited = true;
+  card.updated = new Date().toISOString();
+  await saveBookCard(libraryRoot, slug, card);
+}
+
+export async function updateBookCardBibliography(
+  libraryRoot: string,
+  slug: string,
+  bibliography: BookBibliography,
+  opts: { userEdited?: boolean; title?: string } = {},
+): Promise<ParsedBookCard> {
+  const card =
+    (await loadBookCard(libraryRoot, slug)) ??
+    ({
+      title: slug,
+      author: "",
+      sha256: "",
+      path: "",
+      updated: "",
+      bibliography: emptyBibliography(),
+      bibliographyUserEdited: false,
+    } satisfies ParsedBookCard);
+  if (opts.title?.trim()) card.title = opts.title.trim();
+  card.bibliography = bibliography;
+  card.author = formatAuthorsDisplay(bibliography.authors);
+  if (opts.userEdited) card.bibliographyUserEdited = true;
+  card.updated = new Date().toISOString();
+  await saveBookCard(libraryRoot, slug, card);
+  return card;
+}
+
+export async function updateBookCardPath(libraryRoot: string, slug: string, newPath: string): Promise<void> {
+  const card = await loadBookCard(libraryRoot, slug);
+  if (!card) return;
+  card.path = newPath;
+  card.updated = new Date().toISOString();
+  await saveBookCard(libraryRoot, slug, card);
 }
 
 /** Copy book bytes into knihovna/knihy/ and return stored path (absolute on desktop). */
@@ -164,7 +262,7 @@ export async function readBookBytes(
     const bytes = await readFile(storedPath);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
-  const ext = storedPath.match(/\.(pdf|epub)$/i)?.[0]?.toLowerCase() ?? ".pdf";
+  const ext = storedPath.match(/\.(pdf|epub|mobi|azw3?)$/i)?.[0]?.toLowerCase() ?? ".pdf";
   const b64 = localStorage.getItem(binaryStorageKey(slug, ext));
   if (!b64) return null;
   const bin = atob(b64);

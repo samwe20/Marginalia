@@ -122,21 +122,79 @@ export async function deleteNote(libraryRoot: string, id: string): Promise<void>
   saveLocalNotes(listLocalNotes().filter((n) => n.id !== id));
 }
 
-export function createBlankNote(title: string): LibraryNote {
-  const id = ulid();
-  const now = new Date().toISOString();
-  const slug = title
+export const DEFAULT_NOTE_TITLE = "Bez názvu";
+
+/** Same rule as Folio: a portable filename that can move between Windows, macOS and the web. */
+export function safeNoteTitle(title: string): string {
+  let safe = title
     .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\u00C0-\u024F]+/gi, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
-  return {
-    id,
-    title: title.trim() || "Bez názvu",
-    filename: `${slug || id.toLowerCase()}.md`,
-    body: "",
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 120)
+    .replace(/[. ]+$/, "");
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(safe)) safe = `_${safe}`;
+  return safe || DEFAULT_NOTE_TITLE;
+}
+
+async function noteFileExists(libraryRoot: string, filename: string): Promise<boolean> {
+  if (isTauri() && libraryRoot) {
+    const { exists } = await import("@tauri-apps/plugin-fs");
+    return exists(notePath(libraryRoot, filename));
+  }
+  const lower = filename.toLowerCase();
+  return listLocalNotes().some((n) => n.filename.toLowerCase() === lower);
+}
+
+/** Folio: `Title.md`, then `Title 2.md`, `Title 3.md`… — never an existing file (except `ownFilename`). */
+async function freeNoteFilename(libraryRoot: string, title: string, ownFilename?: string): Promise<string> {
+  const safe = safeNoteTitle(title);
+  const own = ownFilename?.toLowerCase();
+  let filename = `${safe}.md`;
+  for (let i = 2; filename.toLowerCase() !== own && (await noteFileExists(libraryRoot, filename)); i += 1) {
+    filename = `${safe} ${i}.md`;
+  }
+  return filename;
+}
+
+function titleFromFilename(filename: string): string {
+  return filename.replace(/\.md$/i, "");
+}
+
+/** Creates and saves a new note file; never overwrites an existing note. */
+export async function createNote(libraryRoot: string, title: string, body?: string): Promise<LibraryNote> {
+  const filename = await freeNoteFilename(libraryRoot, title);
+  const now = new Date().toISOString();
+  const finalTitle = titleFromFilename(filename);
+  const note: LibraryNote = {
+    id: ulid(),
+    title: finalTitle,
+    filename,
+    body: body ?? `# ${finalTitle}\n\n`,
     created: now,
     updated: now,
   };
+  await saveNote(libraryRoot, note);
+  return note;
+}
+
+/** Folio: renaming the title renames the file; a taken name gets ` 2`, ` 3`… */
+export async function renameNote(libraryRoot: string, note: LibraryNote, newTitle: string): Promise<LibraryNote> {
+  const filename = await freeNoteFilename(libraryRoot, newTitle, note.filename);
+  const renamed: LibraryNote = {
+    ...note,
+    title: titleFromFilename(filename),
+    filename,
+    updated: new Date().toISOString(),
+  };
+  if (isTauri() && libraryRoot && filename !== note.filename) {
+    const { rename } = await import("@tauri-apps/plugin-fs");
+    await rename(notePath(libraryRoot, note.filename), notePath(libraryRoot, filename));
+    try {
+      await indexRemoveNote(note.id);
+    } catch (e) {
+      console.warn("indexRemoveNote after rename failed", e);
+    }
+  }
+  await saveNote(libraryRoot, renamed);
+  return renamed;
 }
