@@ -94,19 +94,20 @@ async function pointerSelectPdfText(): Promise<void> {
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
 }
 
-async function pointerSelectEpubText(): Promise<void> {
+async function pointerSelectEpubText(): Promise<{ x: number; y: number; x2: number; y2: number }> {
   await callSmokeApi<number>("ensureEpubReaderReady");
   let rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
     "epubPointerSelectionRect",
   );
   if (!rect) {
-    await callSmokeApi<number>("ensureEpubReaderReady");
+    await browser.pause(800);
     rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
       "epubPointerSelectionRect",
     );
   }
-  if (!rect) throw new Error("EPUB/MOBI text not found for pointer selection");
+  if (!rect) throw new Error("EPUB iframe text not found for pointer selection");
   await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
+  return rect;
 }
 
 async function pressHighlightSaveKey() {
@@ -365,7 +366,7 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await ensureInspectorOpen();
       const slug = (await callSmokeApi<string>("currentBookSlug")) ?? (await cardSlug("epub"));
       const before = (await quoteFilesOnDisk(slug)).length;
-      await pointerSelectEpubText();
+      const pointer = await pointerSelectEpubText();
       await browser.pause(500);
       const afterSelect = (await quoteFilesOnDisk(slug)).length;
       if (afterSelect !== before) throw new Error(`EPUB selection alone created quote (${before} → ${afterSelect})`);
@@ -374,6 +375,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         async () => (await quoteFilesOnDisk(slug)).length > before,
         { timeout: 20_000, timeoutMsg: "EPUB quote .md after H" },
       );
+      const afterH = (await quoteFilesOnDisk(slug)).length;
+      if (afterH !== before + 1) {
+        throw new Error(`expected exactly one new quote .md after H (${before} → ${afterH})`);
+      }
       const files = await quoteFilesOnDisk(slug);
       const quoteId = files.find((f) => f.endsWith(".md"))?.replace(/\.md$/, "") ?? "";
       if (!quoteId) throw new Error("EPUB quote id missing");
@@ -388,7 +393,14 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       }
       await openQuotesTab();
       await expect($(`[data-user-quote="${quoteId}"]`)).toBeDisplayed();
-      record("S15", "EPUB citace pouze po H (UI)", true, quoteId);
+      const s15Detail = JSON.stringify({
+        pointer,
+        quoteMdBefore: before,
+        quoteMdAfterSelection: afterSelect,
+        quoteMdAfterH: afterH,
+        quoteId,
+      });
+      record("S15", "EPUB citace pouze po H (UI)", true, s15Detail);
     } catch (e) {
       record("S15", "EPUB citace pouze po H (UI)", false, String(e));
       throw e;

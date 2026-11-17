@@ -1,6 +1,12 @@
 import "foliate-js/view.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
-import { attachHighlighter, rangeToOffsets, type HighlightMode } from "../lib/highlighter";
+import {
+  attachHighlighter,
+  caretRangeFromViewportPoint,
+  rangeToOffsets,
+  type HighlightHandle,
+  type HighlightMode,
+} from "../lib/highlighter";
 import { isTauri } from "../lib/runtime";
 
 export interface EpubReaderOptions {
@@ -31,7 +37,7 @@ type FoliateView = HTMLElement & {
 export class EpubReader {
   private view: FoliateView | null = null;
   private contentRoot: HTMLElement | null = null;
-  private highlight: import("../lib/highlighter").HighlightHandle | null = null;
+  private highlights: HighlightHandle[] = [];
   private readyTimer: number | null = null;
   private docText = "";
   private fixturePlainText: string | null = null;
@@ -39,95 +45,90 @@ export class EpubReader {
   constructor(private opts: EpubReaderOptions) {}
 
   commitPendingHighlight(): boolean {
-    return this.highlight?.commitPending() ?? false;
+    for (const handle of this.highlights) {
+      if (handle.commitPending()) return true;
+    }
+    return false;
   }
 
   private wireHighlighter(): void {
     const view = this.view;
     if (!view) return;
-    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? view;
-    this.highlight?.detach();
-    this.highlight = attachHighlighter(
-      highlightRoot,
-      (x, y) => document.caretRangeFromPoint?.(x, y) ?? null,
-      (range) => {
-        const root = this.contentRoot ?? highlightRoot;
-        if (!root) return;
-        const { start, end, text } = rangeToOffsets(root, range);
-        const cfi = view.getCFI?.(range) ?? `/0/0`;
-        const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
-        this.opts.onHighlight({ text, cfi, anchor });
-        this.paintHighlight(range);
-      },
-      this.opts.getMode,
-      () => this.opts.onSelectionPending?.(),
-    );
+    this.highlights.forEach((h) => h.detach());
+    this.highlights = [];
+    const roots = this.collectPointerRoots();
+    const onComplete = (range: Range) => {
+      const root = this.offsetRootForRange(range);
+      if (!root) return;
+      const { start, end, text } = rangeToOffsets(root, range);
+      const cfi = view.getCFI?.(range) ?? `/0/0`;
+      const anchor = anchorFromEpubSelection(this.docText, start, end, cfi);
+      this.opts.onHighlight({ text, cfi, anchor });
+      this.paintHighlight(range);
+    };
+    for (const root of roots) {
+      this.highlights.push(
+        attachHighlighter(
+          root,
+          caretRangeFromViewportPoint,
+          onComplete,
+          this.opts.getMode,
+          () => this.opts.onSelectionPending?.(),
+        ),
+      );
+    }
   }
 
-  /** Smoke / automation: viewport rect for pointer selection (foliate iframe-safe). */
-  pointerSelectionRect(): { x: number; y: number; x2: number; y2: number } | null {
-    const shim = this.opts.container.querySelector(".epub-smoke-pointer-shim");
-    if (shim instanceof HTMLElement) return this.elementSelectionRect(shim);
-    const fallback = this.opts.container.querySelector(".epub-fallback-text");
-    if (fallback instanceof HTMLElement) return this.elementSelectionRect(fallback);
-    const hit = this.firstSelectableText();
-    if (hit) {
-      const range = document.createRange();
+  private collectPointerRoots(): HTMLElement[] {
+    const roots: HTMLElement[] = [];
+    const seen = new Set<HTMLElement>();
+    const add = (el: HTMLElement | null | undefined) => {
+      if (el && !seen.has(el)) {
+        seen.add(el);
+        roots.push(el);
+      }
+    };
+    for (const { doc } of this.view?.renderer?.getContents?.() ?? []) {
+      add(doc?.body ?? null);
+    }
+    const highlightRoot = this.contentRoot ?? this.resolveContentRoot() ?? this.view;
+    if (highlightRoot instanceof HTMLElement) add(highlightRoot);
+    return roots;
+  }
+
+  private offsetRootForRange(range: Range): HTMLElement | null {
+    let node: Node | null = range.commonAncestorContainer;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    if (node instanceof HTMLElement) {
+      const body = node.ownerDocument?.body;
+      if (body?.contains(node)) return body;
+    }
+    return this.contentRoot ?? this.resolveContentRoot();
+  }
+
+  /** Viewport drag endpoints for visible fixture text inside foliate content documents (iframes). */
+  foliateIframePointerRect(): { x: number; y: number; x2: number; y2: number } | null {
+    const markers = ["Marginalia", "fixture", "paragraph"];
+    for (const { doc } of this.view?.renderer?.getContents?.() ?? []) {
+      const body = doc?.body;
+      if (!body) continue;
+      const hit = this.findTextInSubtree(body);
+      if (!hit) continue;
+      const plain = (hit.node.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (plain.length < 8) continue;
+      if (!markers.some((m) => plain.includes(m))) continue;
+      const range = doc.createRange();
       range.selectNodeContents(hit.node);
       const r = range.getClientRects()[0] ?? hit.node.parentElement?.getBoundingClientRect();
-      if (r && r.width >= 4 && r.height >= 4) {
-        return {
-          x: Math.floor(r.left + 6),
-          y: Math.floor(r.top + r.height / 2),
-          x2: Math.floor(r.right - 6),
-          y2: Math.floor(r.top + r.height / 2),
-        };
-      }
+      if (!r || r.width < 4 || r.height < 4) continue;
+      return {
+        x: Math.floor(r.left + 6),
+        y: Math.floor(r.top + r.height / 2),
+        x2: Math.floor(r.right - 6),
+        y2: Math.floor(r.top + r.height / 2),
+      };
     }
     return null;
-  }
-
-  private elementSelectionRect(el: HTMLElement): { x: number; y: number; x2: number; y2: number } | null {
-    const r = el.getBoundingClientRect();
-    if (r.width < 8 || r.height < 4) return null;
-    return {
-      x: Math.floor(r.left + 6),
-      y: Math.floor(r.top + r.height / 2),
-      x2: Math.floor(r.right - 6),
-      y2: Math.floor(r.top + r.height / 2),
-    };
-  }
-
-  async ensureSmokePointerShim(): Promise<void> {
-    if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    if (!(await invoke("smoke_is_enabled"))) return;
-    if (this.pointerSelectionRect()) return;
-    if (this.visibleDomTextLength() <= 3) return;
-    let text = this.fixturePlainText?.trim();
-    if (!text) {
-      try {
-        text = (await invoke("smoke_epub_fixture_paragraph")) as string;
-        this.fixturePlainText = text;
-      } catch {
-        return;
-      }
-    }
-    const { container } = this.opts;
-    let shim = container.querySelector(".epub-smoke-pointer-shim") as HTMLElement | null;
-    if (!shim) {
-      shim = document.createElement("p");
-      shim.className = "epub-smoke-pointer-shim";
-      shim.setAttribute("data-smoke-pointer-shim", "1");
-      if (!container.style.position) container.style.position = "relative";
-      shim.style.cssText =
-        "position:absolute;left:16px;right:16px;bottom:72px;z-index:30;margin:0;padding:8px;font-size:1rem;line-height:1.4;";
-      container.appendChild(shim);
-    }
-    shim.textContent = text;
-    this.contentRoot = shim;
-    this.refreshDocText();
-    this.wireHighlighter();
   }
 
   async load(file: Blob | File): Promise<void> {
@@ -176,6 +177,7 @@ export class EpubReader {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
       this.refreshDocText();
       this.syncTextReadyFlag();
+      this.wireHighlighter();
     });
     view.renderer?.addEventListener?.("relocate", () => {
       this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
@@ -478,7 +480,7 @@ export class EpubReader {
       return null;
     }
     if (root instanceof HTMLElement) {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const walker = (root.ownerDocument ?? document).createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let node = walker.nextNode() as Text | null;
       while (node) {
         if (node.textContent?.trim()) return { node, root };
@@ -571,8 +573,8 @@ export class EpubReader {
   destroy(): void {
     if (this.readyTimer) window.clearTimeout(this.readyTimer);
     this.readyTimer = null;
-    this.highlight?.detach();
-    this.highlight = null;
+    this.highlights.forEach((h) => h.detach());
+    this.highlights = [];
     this.view?.remove();
     this.view = null;
     this.contentRoot = null;

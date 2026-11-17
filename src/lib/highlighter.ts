@@ -14,6 +14,20 @@ export type HighlightHandle = {
   hasPending: () => boolean;
 };
 
+/** Map viewport (top-level) coordinates to a caret range, including foliate iframe pages. */
+export function caretRangeFromViewportPoint(x: number, y: number): Range | null {
+  const direct = document.caretRangeFromPoint?.(x, y);
+  if (direct) return direct;
+  const el = document.elementFromPoint(x, y);
+  if (!(el instanceof HTMLIFrameElement)) return null;
+  const frame = el.getBoundingClientRect();
+  const doc = el.contentDocument;
+  if (!doc) return null;
+  const innerX = x - frame.left - el.clientLeft;
+  const innerY = y - frame.top - el.clientTop;
+  return doc.caretRangeFromPoint?.(innerX, innerY) ?? null;
+}
+
 export function attachHighlighter(
   root: HTMLElement,
   getRangeFromPoint: (x: number, y: number) => Range | null,
