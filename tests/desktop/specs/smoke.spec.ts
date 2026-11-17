@@ -1461,4 +1461,36 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       throw e;
     }
   }).timeout(420_000);
+
+  it("S29 poznámka je v DOM právě jednou (jeden editor, bez druhého náhledu)", async () => {
+    const phrase = `JEDINY-VYSKYT-${Date.now().toString(36)}`;
+    try {
+      await $('[data-route="notes"]').click();
+      await browser.waitUntil(
+        async () => (await $(".notes-layout").getAttribute("data-notes-ready")) === "1",
+        { timeout: 20_000, timeoutMsg: "notes view not ready" },
+      );
+      await $("#btn-new-note").click();
+      await $(".cm-content").click();
+      await browser.keys(["End"]);
+      await browser.keys(phrase.split(""));
+      await browser.pause(900);
+      const dom = await browser.execute((needle) => {
+        const text = document.body.textContent ?? "";
+        return {
+          occurrences: text.split(needle).length - 1,
+          editors: document.querySelectorAll(".notes-editor-pane .cm-editor").length,
+          previews: document.querySelectorAll(".notes-editor-pane #preview-root").length,
+        };
+      }, phrase);
+      if (dom.occurrences !== 1 || dom.editors !== 1 || dom.previews !== 0) {
+        throw new Error(`single editor invariant failed: ${JSON.stringify(dom)}`);
+      }
+      await saveScreenshot("smoke-note-single-editor.png");
+      record("S29", "Poznámka právě jednou v DOM (jeden editor)", true, JSON.stringify(dom));
+    } catch (e) {
+      record("S29", "Poznámka právě jednou v DOM (jeden editor)", false, String(e));
+      throw e;
+    }
+  }).timeout(120_000);
 });

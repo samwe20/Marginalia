@@ -48,3 +48,25 @@ test("three new notes never overwrite each other; rename and reload keep all", a
   expect(bodies.find((n) => n.filename === "Přejmenovaná.md")?.body).toContain("Obsah poznámky 2");
   expect(bodies.find((n) => n.filename === "Bez názvu 3.md")?.body).toContain("Obsah poznámky 3");
 });
+
+test("note uses one editor pane and its text occurs exactly once in the DOM", async ({ page }) => {
+  const phrase = "Jediný výskyt textu poznámky 7f3a";
+  await prepareWebLibrary(page);
+  await openNotes(page);
+  await page.locator("#btn-new-note").click();
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(`${phrase} [[Klikací odkaz]]`);
+
+  await expect(page.locator("#preview-root")).toHaveCount(0);
+  await expect(page.locator(".notes-editor-pane .cm-editor")).toHaveCount(1);
+  await expect(page.locator(".cm-wiki-link", { hasText: "Klikací odkaz" })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (text) => (document.body.textContent ?? "").split(text).length - 1,
+        phrase,
+      ),
+    )
+    .toBe(1);
+});

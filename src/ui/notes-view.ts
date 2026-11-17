@@ -2,7 +2,6 @@ import { createMarginaliaEditor } from "../editor/marginaliaEditor";
 import type { NoteIndex } from "../lib/noteIndex";
 import { getDemoNotes, isDemoEnabled } from "../lib/demo-data";
 import { listNotes, saveNote, createNote, renameNote, DEFAULT_NOTE_TITLE, type LibraryNote } from "../lib/notes";
-import { renderMarkdown } from "../lib/preview";
 import { escapeHtml } from "../lib/html";
 import { renderFolioBacklinksPanel } from "./folio-backlinks";
 import { noteIndexPath } from "../lib/marginalia-paths";
@@ -32,7 +31,6 @@ export async function renderNotesView(
         </aside>
         <div class="notes-editor-pane">
           <div id="editor-root" class="editor-root"></div>
-          <div id="preview-root" class="preview-root preview-pane-inline" tabindex="0" aria-label="Náhled"></div>
         </div>
         <aside class="backlinks-pane notes-backlinks" id="note-backlinks-pane"></aside>
       </div>
@@ -73,7 +71,6 @@ export async function renderNotesView(
         <div class="notes-editor-pane">
           <input class="note-title-input" id="note-title" placeholder="${DEFAULT_NOTE_TITLE}" spellcheck="false" enterkeyhint="done" aria-label="Název poznámky" />
           <div id="editor-root" class="editor-root"></div>
-          <div id="preview-root" class="preview-root preview-pane-inline" tabindex="0" aria-label="Náhled"></div>
         </div>
         <aside class="backlinks-pane notes-backlinks" id="note-backlinks-pane"></aside>
       </div>
@@ -110,7 +107,6 @@ export async function renderNotesView(
     }
 
     const editorHost = stageMain.querySelector("#editor-root") as HTMLElement;
-    const previewRoot = stageMain.querySelector("#preview-root") as HTMLElement;
     const path = noteIndexPath(current.filename);
 
     const openWiki = (title: string, createIfMissing: boolean) =>
@@ -174,8 +170,6 @@ export async function renderNotesView(
         }
         void saveNote(ctx.libraryRoot, current!).then(() => ctx.onReindex());
       }, 600);
-      previewRoot.innerHTML = renderMarkdown(text, ctx.index, { allowRemoteImages: false });
-      wirePreviewWikiClicks(previewRoot, openWiki);
     };
 
     const editor = createMarginaliaEditor(
@@ -192,13 +186,4 @@ export async function renderNotesView(
   };
 
   paint();
-}
-
-function wirePreviewWikiClicks(root: HTMLElement, openWiki: (title: string, c: boolean) => void) {
-  root.querySelectorAll("a[data-wiki-title]").forEach((a) => {
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      openWiki((a as HTMLElement).dataset.wikiTitle!, true);
-    });
-  });
 }
