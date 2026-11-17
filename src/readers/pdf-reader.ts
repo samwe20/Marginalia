@@ -12,12 +12,13 @@ export interface PdfReaderOptions {
   getMode: () => HighlightMode;
   onHighlight: (quote: { text: string; pageIndex: number; anchor: ReturnType<typeof anchorFromPdfSelection> }) => void;
   onPageLabel?: (pageIndex: number) => string;
+  onSelectionPending?: () => void;
 }
 
 export class PdfReader {
   private pdf: pdfjs.PDFDocumentProxy | null = null;
   private pageRoots = new Map<number, HTMLElement>();
-  private detach: (() => void) | null = null;
+  private highlight: import("../lib/highlighter").HighlightHandle | null = null;
 
   constructor(private opts: PdfReaderOptions) {}
 
@@ -58,6 +59,7 @@ export class PdfReader {
 
       const textLayer = document.createElement("div");
       textLayer.className = "textLayer";
+      textLayer.dataset.pageIndex = String(pageNum - 1);
       textLayer.style.setProperty("--scale-factor", String(viewport.scale));
 
       const text = await page.getTextContent();
@@ -74,9 +76,13 @@ export class PdfReader {
     }
   }
 
+  commitPendingHighlight(): boolean {
+    return this.highlight?.commitPending() ?? false;
+  }
+
   private wireHighlighter(): void {
-    this.detach?.();
-    this.detach = attachHighlighter(
+    this.highlight?.detach();
+    this.highlight = attachHighlighter(
       this.opts.container,
       (x, y) => {
         const el = document.elementFromPoint(x, y);
@@ -90,23 +96,28 @@ export class PdfReader {
         return null;
       },
       (range, _stroke) => {
-        const pageLayer = this.findPageLayer(range);
-        if (!pageLayer) return;
-        const pageIndex = Number(pageLayer.dataset.pageIndex ?? "0");
-        const { start, end, text } = rangeToOffsets(pageLayer, range);
-        const anchor = anchorFromPdfSelection(pageLayer.textContent ?? "", pageIndex, start, end, []);
+        const hit = this.findPageLayer(range);
+        if (!hit) return;
+        const { layer, pageIndex } = hit;
+        const { start, end, text } = rangeToOffsets(layer, range);
+        const anchor = anchorFromPdfSelection(layer.textContent ?? "", pageIndex, start, end, []);
         this.opts.onHighlight({ text, pageIndex, anchor });
-        this.paintHighlight(pageLayer, range);
+        this.paintHighlight(layer, range);
       },
       this.opts.getMode,
+      () => this.opts.onSelectionPending?.(),
     );
   }
 
-  private findPageLayer(range: Range): HTMLElement | null {
-    for (const layer of this.pageRoots.values()) {
-      if (layer.contains(range.commonAncestorContainer)) return layer;
+  private findPageLayer(range: Range): { layer: HTMLElement; pageIndex: number } | null {
+    for (const [pageIndex, layer] of this.pageRoots) {
+      if (layer.contains(range.commonAncestorContainer)) return { layer, pageIndex };
     }
     return null;
+  }
+
+  getPageCount(): number {
+    return this.pdf?.numPages ?? 0;
   }
 
   /** Smoke / recovery: first non-empty text span on any page. */
@@ -130,8 +141,11 @@ export class PdfReader {
   }
 
   paintHighlight(_layer: HTMLElement, range: Range): void {
-    const mark = document.createElement("mark");
+    const mark = (range.startContainer.ownerDocument ?? document).createElement("mark");
     mark.className = "quote-highlight";
+    mark.style.backgroundColor = "#f0c84b";
+    mark.style.borderRadius = "3px";
+    mark.style.color = "inherit";
     try {
       range.surroundContents(mark);
     } catch {
@@ -139,6 +153,10 @@ export class PdfReader {
       mark.appendChild(text);
       range.insertNode(mark);
     }
+  }
+
+  highlightPaintCount(): number {
+    return this.opts.container.querySelectorAll("mark.quote-highlight").length;
   }
 
   async restoreHighlights(
@@ -185,8 +203,8 @@ export class PdfReader {
   }
 
   destroy(): void {
-    this.detach?.();
-    this.detach = null;
+    this.highlight?.detach();
+    this.highlight = null;
     this.pageRoots.clear();
     this.pdf?.destroy();
     this.pdf = null;
@@ -199,4 +217,37 @@ export class PdfReader {
   static extractQuoteText(anchor: ReturnType<typeof anchorFromPdfSelection>): string {
     return getTextQuote(anchor)?.exact ?? "";
   }
+}
+
+/** Updates footer as `current/total` while scrolling the PDF surface. */
+export function attachPdfPageCounter(
+  scrollRoot: HTMLElement,
+  pdfRoot: HTMLElement,
+  counterEl: HTMLElement,
+  numPages: number,
+): () => void {
+  const format = (oneBased: number) => `${oneBased}/${numPages}`;
+  const update = () => {
+    const pages = pdfRoot.querySelectorAll<HTMLElement>(".pdf-page");
+    if (!pages.length || numPages < 1) {
+      counterEl.textContent = format(1);
+      return;
+    }
+    const mid = scrollRoot.getBoundingClientRect().top + scrollRoot.clientHeight / 2;
+    let best = 0;
+    let bestDist = Infinity;
+    pages.forEach((page, i) => {
+      const r = page.getBoundingClientRect();
+      const center = (r.top + r.bottom) / 2;
+      const d = Math.abs(center - mid);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    counterEl.textContent = format(best + 1);
+  };
+  scrollRoot.addEventListener("scroll", update, { passive: true });
+  update();
+  return () => scrollRoot.removeEventListener("scroll", update);
 }

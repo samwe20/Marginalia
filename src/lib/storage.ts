@@ -1,6 +1,8 @@
 import { ulid } from "ulidx";
 import type { Anchor } from "./anchor";
-import { bookCardPath, bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
+import { loadBookCard, saveBookCard, type ParsedBookCard } from "./book-library";
+import { migrateBibliographyFromCard } from "./book-bibliography";
+import { bookSlug, LIBRARY_SUBDIRS, quotePath } from "./paths";
 import {
   extractQuoteBodyForIndex,
   formatQuoteMarkdown,
@@ -52,11 +54,61 @@ async function indexUpsert(doc: QuoteDocument, absPath: string): Promise<void> {
 
 export async function ensureBookCard(libraryRoot: string, book: BookMeta): Promise<string> {
   const slug = bookSlug(book.title, book.sha256);
-  const path = bookCardPath(libraryRoot, slug);
+  const existing = await loadBookCard(libraryRoot, slug);
   const now = new Date().toISOString();
-  const body = `---\n\ntitle: ${JSON.stringify(book.title)}\nauthor: ${JSON.stringify(book.author)}\nsha256: ${book.sha256}\npath: ${JSON.stringify(book.filePath)}\nupdated: ${now}\n\n`;
-  await writeText(path, body);
+  const card: ParsedBookCard = existing ?? {
+    title: book.title,
+    author: book.author,
+    sha256: book.sha256,
+    path: book.filePath,
+    updated: now,
+    bibliography: migrateBibliographyFromCard(book.title, book.author, null),
+    bibliographyUserEdited: false,
+  };
+  card.title = book.title;
+  card.author = book.author;
+  card.sha256 = book.sha256;
+  card.path = book.filePath;
+  card.updated = now;
+  if (!existing) {
+    card.bibliography = migrateBibliographyFromCard(book.title, book.author, null);
+  }
+  await saveBookCard(libraryRoot, slug, card);
   return slug;
+}
+
+export async function updateQuoteComment(
+  libraryRoot: string,
+  bookSlug: string,
+  quoteId: string,
+  comment: string,
+): Promise<QuoteDocument | null> {
+  const dir = `${libraryRoot}/citace/${bookSlug}`;
+  const path = `${dir}/${quoteId}.md`;
+  let raw: string;
+  if (isTauri()) {
+    const { readTextFile, writeTextFile } = await import("@tauri-apps/plugin-fs");
+    try {
+      raw = await readTextFile(path);
+    } catch {
+      return null;
+    }
+    const doc = parseQuoteMarkdown(raw);
+    doc.comment = comment.trim();
+    doc.meta.updated = new Date().toISOString();
+    const md = formatQuoteMarkdown(doc);
+    await writeTextFile(path, md);
+    await indexUpsert(doc, path);
+    return doc;
+  }
+  const key = `marginalia:${path}`;
+  raw = localStorage.getItem(key) ?? "";
+  if (!raw) return null;
+  const doc = parseQuoteMarkdown(raw);
+  doc.comment = comment.trim();
+  doc.meta.updated = new Date().toISOString();
+  localStorage.setItem(key, formatQuoteMarkdown(doc));
+  return doc;
 }
 
 export async function saveQuote(
@@ -103,7 +155,11 @@ export async function loadAllQuotesFromLibrary(libraryRoot: string): Promise<Quo
       const slugs = await readDir(root);
       for (const s of slugs) {
         if (!s.isDirectory || !s.name) continue;
-        docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        try {
+          docs.push(...(await loadQuotesForBook(libraryRoot, s.name)));
+        } catch {
+          /* skip unreadable quote dirs */
+        }
       }
     } catch {
       return [];
@@ -128,8 +184,12 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
       const entries = await readDir(dir);
       for (const e of entries) {
         if (e.isFile && e.name?.endsWith(".md")) {
-          const text = await readTextFile(`${dir}/${e.name}`);
-          docs.push(parseQuoteMarkdown(text));
+          try {
+            const text = await readTextFile(`${dir}/${e.name}`);
+            docs.push(parseQuoteMarkdown(text));
+          } catch {
+            /* skip corrupt quote files */
+          }
         }
       }
     } catch {
@@ -143,7 +203,7 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
       docs.push(parseQuoteMarkdown(localStorage.getItem(key)!));
     }
   }
-  return docs;
+  return docs.filter((d) => d.meta.book_slug === slug);
 }
 
 export async function openLibraryIndex(libraryRoot?: string): Promise<void> {

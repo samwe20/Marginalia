@@ -1,7 +1,7 @@
 import type { NoteIndex } from "./noteIndex";
 import { bookIndexPath, noteIndexPath, quoteIndexPath } from "./marginalia-paths";
 import { getDemoBook, getDemoQuote } from "./demo-data";
-import { createBlankNote, saveNote } from "./notes";
+import { createNote } from "./notes";
 import type { NoteMeta } from "../types/folio";
 
 export interface WikiNavigationHandlers {
@@ -63,9 +63,7 @@ export async function createNoteFromTitle(
   index: NoteIndex,
   handlers: Pick<WikiNavigationHandlers, "openNoteEditor" | "toast">,
 ): Promise<void> {
-  const note = createBlankNote(title);
-  note.body = `# ${title}\n\n`;
-  await saveNote(libraryRoot, note);
+  const note = await createNote(libraryRoot, title);
   handlers.toast("Poznámka vytvořena", "success");
   const meta: NoteMeta = {
     id: note.id,
