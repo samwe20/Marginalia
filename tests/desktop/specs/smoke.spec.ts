@@ -423,18 +423,38 @@ async function saveScreenshot(name: string) {
  * service's missing-plugin focus loop (window.wdioTauri is never injected for
  * driverProvider: "external").
  */
+async function disarmMissingWdioPluginBridge() {
+  await browser.execute(function installWdioTauriStub() {
+    if (window.wdioTauri && typeof window.wdioTauri.execute === "function") return false;
+    window.wdioTauri = {
+      execute: function () {
+        return Promise.reject(new Error("Marginalia smoke: @wdio/tauri-plugin not installed"));
+      },
+      waitForInit: function () {
+        return Promise.resolve();
+      },
+    };
+    return true;
+  });
+  try {
+    const handles = await browser.getWindowHandles();
+    if (handles.length) await browser.switchToWindow(handles[0]);
+  } catch {
+    /* best-effort focus suppress */
+  }
+}
+
 async function reloadAppSession() {
   await browser.reloadSession();
   await browser.pause(2_500);
-  const handles = await browser.getWindowHandles();
-  if (!handles.length) {
-    throw new Error("no window handle after reloadSession");
-  }
-  await browser.switchToWindow(handles[0]);
+  // Must run before any $/click: otherwise each command burns ~5s probing for wdioTauri.
+  await disarmMissingWdioPluginBridge();
   await browser.waitUntil(
     async () => {
       try {
-        return Boolean(await $(".sidebar").isExisting());
+        return await browser.execute(function () {
+          return Boolean(document.querySelector(".sidebar"));
+        });
       } catch {
         return false;
       }
