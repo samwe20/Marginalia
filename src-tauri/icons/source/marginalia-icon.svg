@@ -1,64 +1,60 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
-    <clipPath id="page-clip">
+    <clipPath id="page-interior">
       <path
-        d="M 272 196
-           H 732
-           Q 760 196 760 224
-           V 756
-           Q 760 784 732 784
-           H 520
-           L 472 832
-           H 272
-           Q 244 832 244 804
-           V 224
-           Q 244 196 272 196 Z"
+        d="M 296 188
+           H 724
+           Q 756 188 756 220
+           V 712
+           L 692 776
+           H 296
+           Q 268 776 268 744
+           V 220
+           Q 268 188 296 188
+           Z"
       />
     </clipPath>
   </defs>
 
-  <!-- Muted navy app tile -->
-  <rect width="1024" height="1024" rx="224" fill="#30436d" />
+  <rect width="1024" height="1024" rx="220" fill="#30436d" />
 
-  <!-- Page body (dog-ear via cut + fold) -->
+  <!-- Page: straight edges + single diagonal dog-ear cut -->
   <path
     fill="#ffffff"
-    d="M 272 196
-       H 732
-       Q 760 196 760 224
-       V 700
-       L 688 772
-       H 520
-       L 472 832
-       H 272
-       Q 244 832 244 804
-       V 224
-       Q 244 196 272 196 Z"
+    d="M 296 188
+       H 724
+       Q 756 188 756 220
+       V 712
+       L 692 776
+       H 296
+       Q 268 776 268 744
+       V 220
+       Q 268 188 296 188
+       Z"
   />
-  <!-- Folded corner underside -->
-  <path fill="#e5e7eb" d="M 688 772 L 760 700 L 760 772 L 712 820 Z" />
+  <path fill="#e0e0e0" d="M 756 712 L 756 776 L 692 776 Z" />
 
-  <!-- Text lines + highlight (clipped to page) -->
-  <g clip-path="url(#page-clip)">
-    <rect x="312" y="388" width="400" height="28" rx="14" fill="#a8adb3" />
-  </g>
-  <g clip-path="url(#page-clip)" opacity="0.68">
-    <rect x="296" y="458" width="432" height="56" rx="12" fill="#fef08a" />
-  </g>
-  <g clip-path="url(#page-clip)">
-    <rect x="312" y="474" width="400" height="28" rx="14" fill="#a8adb3" />
-    <rect x="312" y="560" width="400" height="28" rx="14" fill="#a8adb3" />
+  <g clip-path="url(#page-interior)">
+    <rect x="312" y="392" width="372" height="26" rx="13" fill="#b0b0b0" />
+    <rect x="296" y="462" width="404" height="68" rx="18" fill="#f9e04e" />
+    <rect x="312" y="484" width="372" height="26" rx="13" fill="#d4b03a" />
+    <rect x="312" y="562" width="372" height="26" rx="13" fill="#b0b0b0" />
   </g>
 
-  <!-- Backlink to dot (omitted below 48px in exported raster tweaks; kept bold for downscale) -->
+  <!-- Backlink: elbow + shallow U from folded corner -->
   <path
-    d="M 728 808 L 728 868 L 808 868 L 808 828 L 872 828"
-    stroke="#a8adb3"
-    stroke-width="22"
+    d="M 724 768
+       H 796
+       V 832
+       H 860
+       V 788
+       H 916"
+    stroke="#b0b0b0"
+    stroke-width="26"
     stroke-linecap="round"
     stroke-linejoin="round"
     fill="none"
   />
-  <circle cx="896" cy="828" r="26" fill="#a8adb3" />
+  <circle cx="952" cy="788" r="36" fill="#b0b0b0" />
 </svg>
