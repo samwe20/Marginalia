@@ -246,11 +246,14 @@ async function dragSelectInCurrentFrame(): Promise<Record<string, unknown>> {
     }
     const inFrameSelection = (await browser.execute(function () {
       const t = window.getSelection()?.toString().trim() ?? "";
-      return { length: t.length, preview: t.slice(0, 160) };
-    })) as { length: number; preview: string };
-    const pendingDiag = await callSmokeApi<{ highlighterPending?: boolean }>("epubSelectionDiagnostics");
-    last = { attempt, plan, inFrameSelection, highlighterPending: pendingDiag.highlighterPending === true };
-    if (inFrameSelection.length >= 3 || pendingDiag.highlighterPending) {
+      const api = (window.top ?? window).__MARGINALIA_SMOKE_API__ as
+        | { epubSelectionDiagnostics?: () => { highlighterPending?: boolean } }
+        | undefined;
+      const highlighterPending = api?.epubSelectionDiagnostics?.()?.highlighterPending === true;
+      return { length: t.length, preview: t.slice(0, 160), highlighterPending };
+    })) as { length: number; preview: string; highlighterPending?: boolean };
+    last = { attempt, plan, inFrameSelection };
+    if (inFrameSelection.length >= 3 || inFrameSelection.highlighterPending) {
       return last;
     }
     await browser.pause(300);
@@ -281,8 +284,12 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     const err = e instanceof Error ? e.message : String(e);
     return dumpEpubPointerFailure("shadow-drag-error", { err, frameMeta });
   }
-  const inFrame = frameDrag.inFrameSelection as { length: number; preview: string };
-  const hasPending = frameDrag.highlighterPending === true;
+  const inFrame = frameDrag.inFrameSelection as {
+    length: number;
+    preview: string;
+    highlighterPending?: boolean;
+  };
+  const hasPending = inFrame?.highlighterPending === true;
   if ((inFrame?.length ?? 0) < 3 && !hasPending) {
     await browser.switchToFrame(null);
     const rect = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(
