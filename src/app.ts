@@ -1164,6 +1164,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     epubVisibleTextLength: () => epub?.visibleDomTextLength() ?? 0,
     ensureEpubReaderReady: async () => {
       if (!epub) throw new Error("EPUB reader not active");
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        if (epub.foliateIframePointerRect()) return epub.visibleDomTextLength();
+        if (epub.foliateIframeVisibleTextLength() > 3) {
+          await new Promise((r) => window.setTimeout(r, 400));
+          continue;
+        }
+        await new Promise((r) => window.setTimeout(r, 400));
+      }
       await epub.ensureReadableFallback();
       return epub.visibleDomTextLength();
     },

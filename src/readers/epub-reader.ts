@@ -1,6 +1,11 @@
 import "foliate-js/view.js";
 import { anchorFromEpubSelection, getEpubCfi, reanchorInText } from "../lib/anchor";
 import {
+  collectFoliateContentDocuments,
+  findIframePointerRect,
+  iframeVisibleTextLength,
+} from "../lib/epub-iframe-geometry";
+import {
   attachHighlighter,
   caretRangeFromViewportPoint,
   rangeToOffsets,
@@ -106,29 +111,17 @@ export class EpubReader {
     return this.contentRoot ?? this.resolveContentRoot();
   }
 
-  /** Viewport drag endpoints for visible fixture text inside foliate content documents (iframes). */
+  contentDocuments(): Document[] {
+    return collectFoliateContentDocuments(this.view, this.opts.container);
+  }
+
+  foliateIframeVisibleTextLength(): number {
+    return iframeVisibleTextLength(this.contentDocuments());
+  }
+
+  /** Viewport drag endpoints for text inside foliate EPUB iframes only. */
   foliateIframePointerRect(): { x: number; y: number; x2: number; y2: number } | null {
-    const markers = ["Marginalia", "fixture", "paragraph"];
-    for (const { doc } of this.view?.renderer?.getContents?.() ?? []) {
-      const body = doc?.body;
-      if (!body) continue;
-      const hit = this.findTextInSubtree(body);
-      if (!hit) continue;
-      const plain = (hit.node.textContent ?? "").replace(/\s+/g, " ").trim();
-      if (plain.length < 8) continue;
-      if (!markers.some((m) => plain.includes(m))) continue;
-      const range = doc.createRange();
-      range.selectNodeContents(hit.node);
-      const r = range.getClientRects()[0] ?? hit.node.parentElement?.getBoundingClientRect();
-      if (!r || r.width < 4 || r.height < 4) continue;
-      return {
-        x: Math.floor(r.left + 6),
-        y: Math.floor(r.top + r.height / 2),
-        x2: Math.floor(r.right - 6),
-        y2: Math.floor(r.top + r.height / 2),
-      };
-    }
-    return null;
+    return findIframePointerRect(this.contentDocuments());
   }
 
   async load(file: Blob | File): Promise<void> {
@@ -206,7 +199,7 @@ export class EpubReader {
     return new Promise((resolve) => {
       let tries = 0;
       const tick = () => {
-        if (this.visibleDomTextLength() > 3) {
+        if (this.foliateIframeVisibleTextLength() > 3 || this.visibleDomTextLength() > 3) {
           this.contentRoot = this.resolveContentRoot() ?? this.contentRoot;
           this.refreshDocText();
           this.syncTextReadyFlag();
@@ -230,6 +223,7 @@ export class EpubReader {
 
   /** When foliate leaves the paginator empty (large EPUB / WebView2), show parsed spine text in-page. */
   private mountPlainTextFallbackIfNeeded(): void {
+    if (this.foliateIframeVisibleTextLength() > 3) return;
     if (this.visibleDomTextLength() > 3 || !this.fixturePlainText) return;
     const { container } = this.opts;
     if (container.querySelector(".epub-fallback-text")) {
@@ -279,9 +273,13 @@ export class EpubReader {
     const candidates = [startIndex, ...linearIndices.filter((i) => i !== startIndex)].slice(0, 14);
     for (const index of candidates) {
       await tryIndex(index);
-      if (this.visibleDomTextLength() > 3) return;
+      if (this.foliateIframeVisibleTextLength() > 3 || this.visibleDomTextLength() > 3) return;
     }
-    for (let step = 0; step < 6 && this.visibleDomTextLength() <= 3; step++) {
+    for (
+      let step = 0;
+      step < 6 && this.foliateIframeVisibleTextLength() <= 3 && this.visibleDomTextLength() <= 3;
+      step++
+    ) {
       await paginator?.next?.();
       await new Promise((r) => window.setTimeout(r, 350));
     }
@@ -372,6 +370,10 @@ export class EpubReader {
 
   /** CI: force plain-text fallback when foliate renders an empty page (WebView2). */
   async ensureReadableFallback(): Promise<void> {
+    if (this.foliateIframeVisibleTextLength() > 3) {
+      this.syncTextReadyFlag();
+      return;
+    }
     if (this.visibleDomTextLength() > 3) return;
     if (!this.fixturePlainText && isTauri()) {
       try {
