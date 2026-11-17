@@ -546,6 +546,33 @@ export class EpubReader {
     }
   }
 
+  /** CI smoke: select text in foliate iframe when WebDriver pointer actions fail (WebView2). */
+  prepareSmokeTextSelection(): boolean {
+    if (this.opts.getMode() !== "highlight") return false;
+    const hit = this.firstSelectableText();
+    if (!hit) return false;
+    const { node, root } = hit;
+    const doc = node.ownerDocument;
+    if (!doc) return false;
+    const raw = node.textContent ?? "";
+    const span = Math.min(raw.length, Math.max(8, Math.min(48, raw.length)));
+    if (span < 3) return false;
+    const range = doc.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, span);
+    const sel = doc.getSelection();
+    if (!sel) return false;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if (root instanceof HTMLElement) {
+      root.dispatchEvent(
+        new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0, view: doc.defaultView ?? window }),
+      );
+    }
+    const selected = sel.toString().trim();
+    return selected.length >= 3 || this.hasPendingHighlight();
+  }
+
   quoteDraftFromFirstText(): {
     text: string;
     cfi: string;

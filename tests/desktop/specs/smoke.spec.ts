@@ -297,11 +297,27 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
     );
     if (!rect) return dumpEpubPointerFailure("fallback-no-pointer-rect");
     await pointerDragViewport(rect.x, rect.y, rect.x2, rect.y2);
-    const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    let diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    if (!epubContentSelectionOk(diag)) {
+      const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+      if (prepared) diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+    }
+    if (!epubContentSelectionOk(diag)) {
+      return dumpEpubPointerFailure("fallback-no-selection", { rect, diag });
+    }
     return { space: "fallback", rect, selectionAfterDrag: diag.selection };
   }
   const picked = await pickFoliateContentIframe();
-  if (!picked) return dumpEpubPointerFailure("foliate-shadow-iframe-missing");
+  if (!picked) {
+    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+    if (prepared) {
+      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      if (epubContentSelectionOk(diag)) {
+        return { space: "smoke-api-no-iframe", stayInFrame: false, selectionAfterDrag: diag, renderInfo };
+      }
+    }
+    return dumpEpubPointerFailure("foliate-shadow-iframe-missing", { prepared });
+  }
   const { ifr, iframeCount, picked: pickedIndex } = picked;
   const iframeMeta = { iframeCount, picked: pickedIndex };
   let dragTry: Awaited<ReturnType<typeof trySingleIframeOriginDrag>> | null = null;
@@ -345,12 +361,28 @@ async function pointerSelectEpubText(): Promise<Record<string, unknown>> {
   }
   if (alt.inFrame.length < 3 && !alt.inFrame.highlighterPending) {
     await browser.switchToFrame(null);
+    const prepared = await callSmokeApi<boolean>("prepareEpubTextSelection");
+    if (prepared) {
+      const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
+      if (epubContentSelectionOk(diag)) {
+        return {
+          space: "smoke-api-selection",
+          stayInFrame: false,
+          frameMeta: iframeMeta,
+          dragTry,
+          altSelect: alt,
+          selectionAfterDrag: diag,
+          renderInfo,
+        };
+      }
+    }
     const diag = await callSmokeApi<Record<string, unknown>>("epubSelectionDiagnostics");
     return dumpEpubPointerFailure("after-iframe-alt-no-selection", {
       dragTry,
       alt,
       diag,
       iframeMeta,
+      prepared,
     });
   }
   const viewport = await callSmokeApi<{ x: number; y: number; x2: number; y2: number } | null>(

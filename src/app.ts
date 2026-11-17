@@ -1331,6 +1331,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return epub.readerRenderInfo();
     },
     epubPointerSelectionRect: () => epub?.readerPointerSelectionRect() ?? null,
+    prepareEpubTextSelection: () => epub?.prepareSmokeTextSelection() ?? false,
     epubSelectionDiagnostics: () => {
       const lastH = (window as unknown as { __MARGINALIA_LAST_HIGHLIGHT_H__?: number })
         .__MARGINALIA_LAST_HIGHLIGHT_H__;

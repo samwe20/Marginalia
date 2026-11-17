@@ -17,6 +17,7 @@ export type SmokeTestApi = {
     iframeElementInLightDom: boolean;
   };
   epubPointerSelectionRect: () => { x: number; y: number; x2: number; y2: number } | null;
+  prepareEpubTextSelection: () => boolean;
   epubSelectionDiagnostics: () => {
     renderInfo: {
       mode: "iframe" | "fallback" | "empty";
