@@ -36,4 +36,4 @@ Branch: `cursor/integration-all-d744` · base: `develop` · **do not merge**
 
 ## Next
 
-1. Push S13 + stress fixes; wait for green smoke → exe + stress metrics table.
+1. Pushed `35acbb3` (S13 + stress). Waiting for green smoke → exe + stress metrics table.
