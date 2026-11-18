@@ -860,9 +860,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const libraryBooks = state.libraryRoot ? await listLibraryBooksFromDisk(state.libraryRoot) : [];
     const authorBySlug = new Map(libraryBooks.map((b) => [b.slug, b.author]));
     const titleBySlug = new Map(libraryBooks.map((b) => [b.slug, b.title]));
-    // Configured library always uses the user quotes + expandable filters chrome —
-    // never fall through to demo `#quotes-filter` without `#quotes-filters-toggle` (S43).
-    if (state.libraryRoot) {
+    // Live library Quotes chrome when we have user quotes, or when demo data is off
+    // (S43: configured library must expose Filtry even at 0 citací).
+    // Web e2e sets libraryRoot=/Marginalia + demo on with 0 user quotes → keep demo grid.
+    if (state.libraryRoot && (userQuotes.length > 0 || !isDemoEnabled())) {
       let filtersExpanded = false;
       let filterState: QuotesFilterState = emptyQuotesFilterState();
       const liveTitles = uniqueSorted(
