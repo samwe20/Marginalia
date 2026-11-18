@@ -1,38 +1,37 @@
 # PR #21 Jan QA — progress
 
-Branch: `cursor/integration-all-d744` · tip (pending push) · base: `develop` · **do not merge**
+Branch: `cursor/integration-all-d744` · tip `932733d` · base: `develop` · **do not merge**
 
 ## Status overview
 
 | # | Úprava | Smoke | CI |
 |---|--------|-------|-----|
-| 1 | Chevron | **S39** | green |
-| 2 | Backlink citace | **S40** | green |
-| 3 | Deduplikace | **S41** | green |
-| 4 | Koš + Vrátit | **S42** | green |
-| 5 | Filtry | **S43** | green |
-| 6 | Stress 1000 knih | stress.spec | fixing perf |
+| 1 | Chevron | **S39** | pending tip |
+| 2 | Backlink citace | **S40** | pending tip |
+| 3 | Deduplikace | **S41** | pending tip |
+| 4 | Koš + Vrátit | **S42** | pending tip |
+| 5 | Filtry | **S43** | pending tip |
+| 6 | Stress 1000 knih | stress.spec | **watching** [44223050094](https://github.com/samwe20/Marginalia/actions/runs/44223050094) |
 
-## Run [44217431406](https://github.com/samwe20/Marginalia/actions/runs/44217431406) — `2e2323a`
+## Failed baseline — [44217431406](https://github.com/samwe20/Marginalia/actions/runs/44217431406) @ `2e2323a`
 
-Smoke **44/44** ✓ · Stress ✗
+Smoke **44/44** ✓ · Stress ✗ (~34 min)
 
-| metric | value | threshold | result |
-|--------|-------|-----------|--------|
-| books @ T01 timeout | 403 | 1000 | ✗ |
+| metric | value | expected | result |
+|--------|-------|----------|--------|
+| T01 books @ timeout | 403 | 1000 | ✗ (~0.5 book/s) |
 | quotes / notes | 5000 / 500 | ≥5000 / ≥500 | ✓ |
-| rescan progress | 515 → 579 | stable 1000 | ✗ (ghost scan overlap) |
-| initialScanMsMax | — | 600000 | not finished |
-| rescanMsMax | — | 480000 | timeouts |
+| T04/T05 book growth | 515 → 579 | stable 1000 | ✗ ghost scan overlap |
 
 **Root causes**
-1. O(n²) `findBookCardBySha256` during bulk import (`5a37550`)
-2. Ghost scan: T01 timeout left `finishLibrarySetup` running → T04/T05 started parallel rescans → book count grew 403→515→579 (not true dupes)
-3. Notes FTS rebuild before import; card rewrites on unchanged identity
+1. O(n²) `findBookCardBySha256` during bulk import → fixed `5a37550`
+2. Ghost scan after T01 timeout → overlapping rescans grew counts → fixed `932733d` (scan epoch + cancel)
+3. Notes FTS before import + rewriting unchanged cards → fixed `932733d`
 
-**Fixes in this tip**
+## Tip `932733d` fixes
+
 - Scan epoch + `cancelLibraryScan` / `shouldAbort` (no overlapping imports)
-- Skip card rewrite when sha/path/title/author unchanged
+- Path+sha fast-path skips re-hash + card rewrite on unchanged rescan
 - Defer notes FTS until after book import
 - Stress table: import/rescan ms, books, quotes, notes, JS heap MB
 
@@ -45,3 +44,7 @@ Smoke **44/44** ✓ · Stress ✗
 | Deduplikace | S41 |
 | Koš + Vrátit | S42 |
 | Filtry | S43 |
+
+## Next
+
+Await stress metrics from [44223050094](https://github.com/samwe20/Marginalia/actions/runs/44223050094); report real numbers; no merge.
