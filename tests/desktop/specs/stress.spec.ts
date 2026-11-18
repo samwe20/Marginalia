@@ -20,6 +20,13 @@ type Manifest = {
     rescanMsMax: number;
   };
 };
+type ScanJob = {
+  kind: "idle" | "setup" | "rescan";
+  running: boolean;
+  books: number;
+  imported: number;
+  error: string | null;
+};
 
 const results: Row[] = [];
 const metrics: Record<string, number | string | boolean> = {};
@@ -97,6 +104,31 @@ function writeArtifacts() {
   console.log("stress-metrics.json:", JSON.stringify(metrics, null, 2));
 }
 
+/**
+ * Kick off a long library scan outside a single WebDriver execute, then poll
+ * short status calls so connectionRetryTimeout cannot abort mid-scan.
+ */
+async function awaitScanJob(
+  startMethod: "startLibrarySetupScan" | "startRescanBooks",
+  startArgs: unknown[],
+  timeoutMs: number,
+): Promise<ScanJob> {
+  const started = await callSmokeApi<{ started: boolean }>(startMethod, ...startArgs);
+  if (!started?.started) throw new Error(`${startMethod} did not start`);
+
+  const deadline = Date.now() + timeoutMs;
+  let last: ScanJob = { kind: "idle", running: true, books: 0, imported: 0, error: null };
+  while (Date.now() < deadline) {
+    last = await callSmokeApi<ScanJob>("libraryScanJob");
+    if (!last.running) {
+      if (last.error) throw new Error(`${startMethod} failed: ${last.error}`);
+      return last;
+    }
+    await browser.pause(1_500);
+  }
+  throw new Error(`${startMethod} still running after ${timeoutMs}ms (last books=${last.books})`);
+}
+
 describe("Marginalia installed-app stress", () => {
   const manifest = loadManifest();
   const expectedBooks = manifest.thresholds.expectedBooks;
@@ -108,6 +140,14 @@ describe("Marginalia installed-app stress", () => {
   const rescanMsMax = Number(
     process.env.MARGINALIA_STRESS_RESCAN_MS_MAX || manifest.thresholds.rescanMsMax,
   );
+
+  afterEach(() => {
+    try {
+      writeArtifacts();
+    } catch {
+      /* best-effort so hung suite still leaves partial metrics */
+    }
+  });
 
   after(() => {
     writeArtifacts();
@@ -136,8 +176,9 @@ describe("Marginalia installed-app stress", () => {
       await browser.pause(800);
 
       const t0 = Date.now();
-      const loaded = (await callSmokeApi<number>("finishLibrarySetup", library)) ?? 0;
+      const job = await awaitScanJob("startLibrarySetupScan", [library], initialScanMsMax + 120_000);
       const initialScanMs = Date.now() - t0;
+      const loaded = job.books;
       metrics.initialScanMs = initialScanMs;
       metrics.initialBookCount = loaded;
 
@@ -231,20 +272,20 @@ describe("Marginalia installed-app stress", () => {
     try {
       const before = await callSmokeApi<number>("countScannedBookCards");
       const t0 = Date.now();
-      const rescan = await callSmokeApi<{ imported: number; total: number }>("rescanBooksFromFolder");
+      const job = await awaitScanJob("startRescanBooks", [], rescanMsMax + 120_000);
       const rescanMs = Date.now() - t0;
       const after = await callSmokeApi<number>("countScannedBookCards");
 
       metrics.rescanMs = rescanMs;
-      metrics.rescanImported = rescan.imported;
-      metrics.rescanTotal = rescan.total;
+      metrics.rescanImported = job.imported;
+      metrics.rescanTotal = job.books;
       metrics.rescanBookCount = after;
 
       if (after !== before || after !== expectedBooks) {
         throw new Error(`rescan grew/shrank books ${before} → ${after} (expected ${expectedBooks})`);
       }
-      if (rescan.total !== expectedBooks) {
-        throw new Error(`rescan.total ${rescan.total} ≠ expected ${expectedBooks}`);
+      if (job.books !== expectedBooks) {
+        throw new Error(`rescan.total ${job.books} ≠ expected ${expectedBooks}`);
       }
       if (rescanMs > rescanMsMax) {
         throw new Error(`rescan ${rescanMs}ms exceeded max ${rescanMsMax}ms`);
@@ -260,7 +301,7 @@ describe("Marginalia installed-app stress", () => {
         "T04",
         "Rescan unchanged library within threshold",
         true,
-        `total=${rescan.total} imported=${rescan.imported}`,
+        `total=${job.books} imported=${job.imported}`,
         rescanMs,
       );
     } catch (e) {
@@ -273,11 +314,11 @@ describe("Marginalia installed-app stress", () => {
     try {
       const before = await callSmokeApi<number>("countScannedBookCards");
       const t0 = Date.now();
-      const rescan = await callSmokeApi<{ imported: number; total: number }>("rescanBooksFromFolder");
+      const job = await awaitScanJob("startRescanBooks", [], rescanMsMax + 120_000);
       const secondRescanMs = Date.now() - t0;
       const after = await callSmokeApi<number>("countScannedBookCards");
       metrics.secondRescanMs = secondRescanMs;
-      metrics.secondRescanTotal = rescan.total;
+      metrics.secondRescanTotal = job.books;
 
       if (after !== before || after !== expectedBooks) {
         throw new Error(`second rescan changed count ${before} → ${after}`);
@@ -285,7 +326,7 @@ describe("Marginalia installed-app stress", () => {
       if (secondRescanMs > rescanMsMax) {
         throw new Error(`second rescan ${secondRescanMs}ms exceeded max ${rescanMsMax}ms`);
       }
-      record("T05", "Second rescan stable", true, `total=${rescan.total}`, secondRescanMs);
+      record("T05", "Second rescan stable", true, `total=${job.books}`, secondRescanMs);
     } catch (e) {
       record("T05", "Second rescan stable", false, String(e));
       throw e;

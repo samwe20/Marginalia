@@ -68,7 +68,7 @@ import {
   recordFolderPickerInvocation,
   resetFolderPickerInvocationCount,
 } from "./lib/library-root-telemetry";
-import { createNote, listNotes } from "./lib/notes";
+import { createNote } from "./lib/notes";
 import {
   bindQuoteMetaToggles,
   expandFirstQuoteMeta,
@@ -1494,6 +1494,15 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   });
 
 
+  type LibraryScanJobState = {
+    kind: "idle" | "setup" | "rescan";
+    running: boolean;
+    books: number;
+    imported: number;
+    error: string | null;
+  };
+  let libraryScanJobState: LibraryScanJobState | null = null;
+
   installSmokeTestApi({
     dropBookFromPath: async (libraryRoot, filePath) => {
       if (!libraryRoot) {
@@ -1630,6 +1639,62 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (state.route === "library") await renderLibrary();
       return { imported, total: (await listBooksForLibrary()).length };
     },
+    startLibrarySetupScan: (libraryRoot: string) => {
+      const job = {
+        kind: "setup" as const,
+        running: true,
+        books: 0,
+        imported: 0,
+        error: null as string | null,
+      };
+      libraryScanJobState = job;
+      void (async () => {
+        try {
+          await finishLibrarySetup(libraryRoot);
+          job.books = (await listBooksForLibrary()).length;
+          job.imported = job.books;
+        } catch (e) {
+          job.error = String(e);
+        } finally {
+          job.running = false;
+        }
+      })();
+      return { started: true };
+    },
+    startRescanBooks: () => {
+      if (!state.libraryRoot) throw new Error("No library root");
+      const job = {
+        kind: "rescan" as const,
+        running: true,
+        books: 0,
+        imported: 0,
+        error: null as string | null,
+      };
+      libraryScanJobState = job;
+      const root = state.libraryRoot;
+      void (async () => {
+        try {
+          await runLibraryDedupeMigration();
+          job.imported = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport);
+          await runLibraryDedupeMigration();
+          if (state.route === "library") await renderLibrary();
+          job.books = (await listBooksForLibrary()).length;
+        } catch (e) {
+          job.error = String(e);
+        } finally {
+          job.running = false;
+        }
+      })();
+      return { started: true };
+    },
+    libraryScanJob: () =>
+      libraryScanJobState ?? {
+        kind: "idle" as const,
+        running: false,
+        books: 0,
+        imported: 0,
+        error: null,
+      },
     countScannedBookCards: async () => (await listBooksForLibrary()).length,
     libraryStressSummary: async () => {
       const books = await listBooksForLibrary();
@@ -1655,10 +1720,38 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       };
     },
     libraryContentCounts: async () => {
+      // Count .md files only — parsing 5k quote bodies inside one WDIO execute hangs CI.
       if (!state.libraryRoot) return { quotes: 0, notes: 0 };
-      const quotes = await loadAllQuotesFromLibrary(state.libraryRoot);
-      const notes = await listNotes(state.libraryRoot);
-      return { quotes: quotes.length, notes: notes.length };
+      const { readDir } = await import("@tauri-apps/plugin-fs");
+      let quotes = 0;
+      try {
+        const slugDirs = await readDir(`${state.libraryRoot}/citace`);
+        for (let i = 0; i < slugDirs.length; i++) {
+          const s = slugDirs[i]!;
+          if (!s.isDirectory || !s.name) continue;
+          try {
+            const entries = await readDir(`${state.libraryRoot}/citace/${s.name}`);
+            for (const e of entries) {
+              if (e.isFile && e.name?.endsWith(".md")) quotes += 1;
+            }
+          } catch {
+            /* skip */
+          }
+          if (i % 25 === 24) await new Promise((r) => setTimeout(r, 0));
+        }
+      } catch {
+        quotes = 0;
+      }
+      let notes = 0;
+      try {
+        const entries = await readDir(`${state.libraryRoot}/poznamky`);
+        for (const e of entries) {
+          if (e.isFile && e.name?.endsWith(".md")) notes += 1;
+        }
+      } catch {
+        notes = 0;
+      }
+      return { quotes, notes };
     },
     ensureInspectorOpen: () => {
       if (state.route !== "reader") throw new Error("ensureInspectorOpen requires reader route");

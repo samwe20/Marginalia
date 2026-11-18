@@ -57,6 +57,19 @@ export type SmokeTestApi = {
   openBookAtPath: (filePath: string, libraryRoot?: string) => Promise<void>;
   finishLibrarySetup: (libraryRoot: string) => Promise<number>;
   rescanBooksFromFolder: () => Promise<{ imported: number; total: number }>;
+  /**
+   * Stress CI: kick off setup/rescan without holding one long WebDriver execute
+   * (connectionRetryTimeout would abort mid-scan of ~1000 books).
+   */
+  startLibrarySetupScan: (libraryRoot: string) => { started: boolean };
+  startRescanBooks: () => { started: boolean };
+  libraryScanJob: () => {
+    kind: "idle" | "setup" | "rescan";
+    running: boolean;
+    books: number;
+    imported: number;
+    error: string | null;
+  };
   countScannedBookCards: () => Promise<number>;
   /** Stress CI: unique slug/sha diagnostics for large libraries. */
   libraryStressSummary: () => Promise<{

@@ -129,13 +129,9 @@ export async function registerBookFromDiskPath(
 }
 
 function yieldToUi(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => resolve());
-    } else {
-      setTimeout(resolve, 0);
-    }
-  });
+  // Prefer setTimeout over rAF: WebDriver/WebView needs the event loop to service
+  // execute/async while a large scan (stress ~1000 books) is in progress.
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export async function syncAllBooksFromLibraryFolder(
@@ -159,8 +155,8 @@ export async function syncAllBooksFromLibraryFolder(
     } catch {
       /* one corrupt file must not abort the whole scan */
     }
-    // Keep the UI thread responsive on large libraries (stress ~1000 books).
-    if (i % 8 === 7) await yieldToUi();
+    // Yield every book so WDIO can poll / the UI stays responsive.
+    await yieldToUi();
   }
   return count;
 }

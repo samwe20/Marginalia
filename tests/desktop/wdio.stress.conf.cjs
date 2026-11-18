@@ -58,7 +58,8 @@ exports.config = {
   ],
   logLevel: "warn",
   waitforTimeout: 30_000,
-  connectionRetryTimeout: 180_000,
+  // Short execute/poll calls only — long scans run in-app via startLibrarySetupScan.
+  connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
   framework: "mocha",
   reporters: ["spec"],
@@ -89,10 +90,10 @@ exports.config = {
       timer.unref?.();
       globalThis.__MARGINALIA_STRESS_SUITE_TIMER__ = timer;
     }
-    // finishLibrarySetup / rescan of ~1000 books runs inside browser.execute.
-    // Default script timeout (~30s) aborts mid-scan (CI saw ~32/1000 books).
+    // Scans are started via short smoke API calls and polled; keep script timeout
+    // generous for libraryStressSummary / content counts only.
     try {
-      await browser.setTimeout({ script: 20 * 60 * 1000 });
+      await browser.setTimeout({ script: 10 * 60 * 1000 });
     } catch {
       /* older drivers may ignore */
     }
@@ -101,7 +102,7 @@ exports.config = {
   beforeTest: async () => {
     const browser = globalThis.browser;
     try {
-      await browser.setTimeout({ script: 20 * 60 * 1000 });
+      await browser.setTimeout({ script: 10 * 60 * 1000 });
     } catch {
       /* ignore */
     }
