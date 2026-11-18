@@ -1,6 +1,6 @@
 # PR #21 Jan QA — progress
 
-Branch: `cursor/integration-all-d744` · tip (pending stress fix) · base: `develop` · **do not merge**
+Branch: `cursor/integration-all-d744` · tip `49d6340` · base: `develop` · **do not merge**
 
 ## Status overview
 
