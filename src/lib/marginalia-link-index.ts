@@ -6,6 +6,9 @@ import { listNotes } from "./notes";
 import type { NoteMeta } from "../types/folio";
 import { bookIndexPath, noteIndexPath, quoteIndexPath } from "./marginalia-paths";
 import { isTauri } from "./runtime";
+import { loadAllQuotesFromLibrary } from "./storage";
+import { quotePreviewLabel } from "./quote-display";
+import { formatQuotePageLabel } from "../ui/user-quote-card";
 
 function metaFromBook(b: DemoBook): NoteMeta {
   const path = bookIndexPath(b.slug);
@@ -20,16 +23,22 @@ function metaFromBook(b: DemoBook): NoteMeta {
   };
 }
 
-function metaFromQuote(q: DemoQuote): NoteMeta {
+function metaFromQuote(q: DemoQuote, bookTitle: string): NoteMeta {
   const path = quoteIndexPath(q.id);
+  const preview = quotePreviewLabel(q.quoteText);
+  const page = formatQuotePageLabel(q.page);
   return {
     id: q.id,
-    title: q.id,
+    title: preview,
     path,
     relativePath: path,
     mtime: Date.parse(q.created),
     createdAt: Date.parse(q.created),
     kind: "quote",
+    quotePreview: preview,
+    quoteBookTitle: bookTitle,
+    quotePage: page,
+    quoteBookSlug: q.bookSlug,
   };
 }
 
@@ -59,13 +68,41 @@ function metaFromDemoNote(n: DemoNote): NoteMeta {
   };
 }
 
+function metaFromLibraryQuote(q: {
+  meta: {
+    id: string;
+    book_slug: string;
+    book_title: string;
+    page: string;
+    created: string;
+    updated: string;
+  };
+  quoteText: string;
+}): NoteMeta {
+  const path = quoteIndexPath(q.meta.id);
+  const preview = quotePreviewLabel(q.quoteText);
+  const page = formatQuotePageLabel(q.meta.page);
+  return {
+    id: q.meta.id,
+    title: preview,
+    path,
+    relativePath: path,
+    mtime: Date.parse(q.meta.updated),
+    createdAt: Date.parse(q.meta.created),
+    kind: "quote",
+    quotePreview: preview,
+    quoteBookTitle: q.meta.book_title,
+    quotePage: page,
+    quoteBookSlug: q.meta.book_slug,
+  };
+}
+
 export async function rebuildMarginaliaLinkIndex(
   index: NoteIndex,
   libraryRoot: string,
 ): Promise<void> {
   const metas: NoteMeta[] = [];
   const bookBySlug = new Map<string, DemoBook>();
-  const quoteMetas: NoteMeta[] = [];
 
   if (isDemoEnabled()) {
     for (const b of getDemoBooks()) {
@@ -73,15 +110,17 @@ export async function rebuildMarginaliaLinkIndex(
       metas.push(metaFromBook(b));
     }
     for (const q of getDemoQuotes()) {
-      const m = metaFromQuote(q);
-      quoteMetas.push(m);
-      metas.push(m);
+      const book = bookBySlug.get(q.bookSlug);
+      metas.push(metaFromQuote(q, book?.title ?? q.bookSlug));
     }
     for (const n of getDemoNotes()) metas.push(metaFromDemoNote(n));
   }
 
   const notes = await listNotes(libraryRoot);
   for (const n of notes) metas.push(metaFromLibraryNote(n));
+
+  const libraryQuotes = libraryRoot ? await loadAllQuotesFromLibrary(libraryRoot) : [];
+  for (const q of libraryQuotes) metas.push(metaFromLibraryQuote(q));
 
   const dedup = new Map<string, NoteMeta>();
   for (const m of metas) dedup.set(m.path, m);
@@ -94,6 +133,7 @@ export async function rebuildMarginaliaLinkIndex(
   for (const q of getDemoQuotes()) {
     const m = dedup.get(quoteIndexPath(q.id));
     if (!m) continue;
+    // Keep id aliases for internal resolve; never use them as display title.
     index.registerAlias(q.id, m);
     const short = q.id.replace(/^demo-/, "");
     if (short !== q.id) index.registerAlias(short, m);
@@ -117,6 +157,16 @@ export async function rebuildMarginaliaLinkIndex(
     for (const n of getDemoNotes()) index.setContent(noteIndexPath(n.filename), n.body);
   }
   for (const n of notes) index.setContent(noteIndexPath(n.filename), n.body);
+  for (const q of libraryQuotes) {
+    const body = q.comment.trim() ? q.comment : `> ${q.quoteText}`;
+    const path = quoteIndexPath(q.meta.id);
+    index.setContent(path, body);
+    const m = dedup.get(path);
+    if (m) {
+      index.registerAlias(q.meta.id, m);
+      if (q.meta.book_title.trim()) index.registerAlias(`${q.meta.book_title} — citace`, m);
+    }
+  }
 
   if (isTauri()) {
     try {

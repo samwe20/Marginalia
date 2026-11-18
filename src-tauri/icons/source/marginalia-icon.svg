@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <clipPath id="page-interior">
+      <path
+        d="M 296 188
+           H 724
+           Q 756 188 756 220
+           V 712
+           L 692 776
+           H 296
+           Q 268 776 268 744
+           V 220
+           Q 268 188 296 188
+           Z"
+      />
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="#30436d" />
+
+  <!-- Page: straight edges + single diagonal dog-ear cut -->
+  <path
+    fill="#ffffff"
+    d="M 296 188
+       H 724
+       Q 756 188 756 220
+       V 712
+       L 692 776
+       H 296
+       Q 268 776 268 744
+       V 220
+       Q 268 188 296 188
+       Z"
+  />
+  <path fill="#9aa3b0" d="M 756 712 L 756 776 L 692 776 Z" />
+
+  <g clip-path="url(#page-interior)">
+    <rect x="312" y="392" width="372" height="26" rx="13" fill="#b0b0b0" />
+    <rect x="296" y="462" width="404" height="68" rx="18" fill="#f9e04e" />
+    <rect x="312" y="484" width="372" height="26" rx="13" fill="#d4b03a" />
+    <rect x="312" y="562" width="372" height="26" rx="13" fill="#b0b0b0" />
+  </g>
+
+  <!-- Backlink: elbow + shallow U from folded corner -->
+  <path
+    d="M 724 768
+       H 796
+       V 832
+       H 860
+       V 788
+       H 916"
+    stroke="#b0b0b0"
+    stroke-width="26"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <circle cx="952" cy="788" r="36" fill="#b0b0b0" />
+</svg>

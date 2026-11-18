@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <clipPath id="page-interior-small">
+      <path
+        d="M 296 188
+           H 724
+           Q 756 188 756 220
+           V 712
+           L 692 776
+           H 296
+           Q 268 776 268 744
+           V 220
+           Q 268 188 296 188
+           Z"
+      />
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="#30436d" />
+
+  <path
+    fill="#ffffff"
+    d="M 296 188
+       H 724
+       Q 756 188 756 220
+       V 712
+       L 692 776
+       H 296
+       Q 268 776 268 744
+       V 220
+       Q 268 188 296 188
+       Z"
+  />
+  <path fill="#9aa3b0" d="M 756 712 L 756 776 L 692 776 Z" />
+
+  <g clip-path="url(#page-interior-small)">
+    <rect x="312" y="392" width="372" height="26" rx="13" fill="#b0b0b0" />
+    <!-- Solid highlighter band for small raster sizes -->
+    <rect x="288" y="456" width="420" height="76" rx="20" fill="#ffd84a" />
+    <rect x="312" y="482" width="372" height="28" rx="14" fill="#c9a028" />
+    <rect x="312" y="562" width="372" height="26" rx="13" fill="#b0b0b0" />
+  </g>
+</svg>

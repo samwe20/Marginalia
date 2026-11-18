@@ -1,4 +1,3 @@
-import { anchorFromPdfSelection } from "./anchor";
 import { saveQuote, loadQuotesForBook, ensureBookCard, type BookMeta } from "./storage";
 import { PdfReader } from "../readers/pdf-reader";
 import { EpubReader } from "../readers/epub-reader";
@@ -6,6 +5,10 @@ import { EpubReader } from "../readers/epub-reader";
 export async function runPdfHighlightRestoreTest(pdfUrl: string): Promise<{
   saved: boolean;
   restored: boolean;
+  painted: number;
+  restoredCount: number;
+  paintedVisible: boolean;
+  restoredVisible: boolean;
   text: string;
 }> {
   const libraryRoot = "/Marginalia";
@@ -34,14 +37,16 @@ export async function runPdfHighlightRestoreTest(pdfUrl: string): Promise<{
     },
   });
   await reader.load(bytes);
-
-  const layer = container.querySelector(".textLayer") as HTMLElement | null;
-  const full = layer?.textContent ?? "";
-  const needle = "Marginalia";
-  const start = full.indexOf(needle);
-  if (start < 0) throw new Error("fixture text missing in PDF layer");
-  const anchor = anchorFromPdfSelection(full, 0, start, start + needle.length, []);
-  await saveQuote(libraryRoot, book, slug, needle, "1", anchor);
+  const draft = reader.quoteDraftFromFirstText();
+  if (!draft) throw new Error("fixture text missing in PDF layer");
+  reader.paintHighlight(draft.layer, draft.range);
+  await saveQuote(libraryRoot, book, slug, draft.text, String(draft.pageIndex + 1), draft.anchor);
+  savedText = draft.text;
+  const painted = reader.highlightPaintCount();
+  const firstMark = container.querySelector<HTMLElement>("mark.quote-highlight");
+  const paintedVisible = Boolean(
+    firstMark && getComputedStyle(firstMark).backgroundColor !== "rgba(0, 0, 0, 0)",
+  );
 
   container.innerHTML = "";
   const reader2 = new PdfReader({
@@ -52,10 +57,23 @@ export async function runPdfHighlightRestoreTest(pdfUrl: string): Promise<{
   await reader2.load(bytes);
   const docs = await loadQuotesForBook(libraryRoot, slug);
   await reader2.restoreHighlights(docs.map((d) => ({ anchor: d.meta.anchor, text: d.quoteText })));
-  const restored = Boolean(container.querySelector(".quote-highlight"));
+  const restoredCount = reader2.highlightPaintCount();
+  const restoredMark = container.querySelector<HTMLElement>("mark.quote-highlight");
+  const restoredVisible = Boolean(
+    restoredMark && getComputedStyle(restoredMark).backgroundColor !== "rgba(0, 0, 0, 0)",
+  );
+  const restored = restoredCount > 0;
 
   container.remove();
-  return { saved: Boolean(savedText || needle), restored, text: needle };
+  return {
+    saved: Boolean(savedText),
+    restored,
+    painted,
+    restoredCount,
+    paintedVisible,
+    restoredVisible,
+    text: savedText,
+  };
 }
 
 export async function runPdfTextLayerTest(pdfUrl: string): Promise<{
@@ -124,16 +142,66 @@ export async function runEpubLoadTest(epubUrl: string): Promise<boolean> {
   return ok;
 }
 
+export async function runEpubHighlightRestoreTest(
+  bookUrl: string,
+  fileName = "sample.epub",
+): Promise<{ cfi: string; painted: number; restored: number }> {
+  const bytes = await fetch(bookUrl).then((r) => r.arrayBuffer());
+  const container = document.createElement("div");
+  container.style.width = "800px";
+  container.style.height = "600px";
+  document.body.appendChild(container);
+
+  const makeReader = () =>
+    new EpubReader({
+      container,
+      flow: "scrolled",
+      getMode: () => "highlight",
+      onHighlight: async () => undefined,
+    });
+
+  const reader = makeReader();
+  await reader.load(new File([bytes.slice(0)], fileName));
+  let draft = reader.quoteDraftFromFirstText();
+  for (let i = 0; !draft && i < 40; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    draft = reader.quoteDraftFromFirstText();
+  }
+  if (!draft?.range) throw new Error("No live foliate range for highlight");
+  if (!draft.cfi.startsWith("epubcfi(")) throw new Error(`Invalid foliate CFI: ${draft.cfi}`);
+  reader.paintHighlight(draft.range);
+  await new Promise((r) => setTimeout(r, 200));
+  const painted = reader.highlightPaintCount();
+  const anchor = draft.anchor;
+  const cfi = draft.cfi;
+  reader.destroy();
+
+  const reader2 = makeReader();
+  await reader2.load(new File([bytes.slice(0)], fileName));
+  await reader2.restoreHighlights([{ anchor }]);
+  await new Promise((r) => setTimeout(r, 200));
+  const restored = reader2.highlightPaintCount();
+  reader2.destroy();
+  container.remove();
+  return { cfi, painted, restored };
+}
+
 declare global {
   interface Window {
     __marginaliaE2E?: {
       runPdfHighlightRestoreTest: typeof runPdfHighlightRestoreTest;
       runEpubLoadTest: typeof runEpubLoadTest;
+      runEpubHighlightRestoreTest: typeof runEpubHighlightRestoreTest;
       runPdfTextLayerTest: typeof runPdfTextLayerTest;
     };
   }
 }
 
 export function exposeE2EHarness(): void {
-  window.__marginaliaE2E = { runPdfHighlightRestoreTest, runEpubLoadTest, runPdfTextLayerTest };
+  window.__marginaliaE2E = {
+    runPdfHighlightRestoreTest,
+    runEpubLoadTest,
+    runEpubHighlightRestoreTest,
+    runPdfTextLayerTest,
+  };
 }

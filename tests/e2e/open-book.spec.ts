@@ -1,29 +1,18 @@
 import { test, expect } from "@playwright/test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { expectPdfReaderTextReady, prepareWebLibrary } from "./helpers";
 
 const fixtures = join(process.cwd(), "tests", "fixtures");
 
 test.describe("open book (web build)", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector(".sidebar");
-    await page.evaluate(() => localStorage.setItem("marginalia.libraryRoot", "/Marginalia"));
-    await page.locator('.nav-item[data-route="library"]').click();
-    await page.waitForSelector("#btn-open-book");
-  });
-
-  test("Otevřít knihu spustí výběr souboru", async ({ page }) => {
-    const [chooser] = await Promise.all([
-      page.waitForEvent("filechooser"),
-      page.locator("#btn-open-book").click(),
-    ]);
-    expect(chooser.isMultiple()).toBe(false);
+    await prepareWebLibrary(page);
   });
 
   test("PDF má interaktivní textLayer po otevření", async ({ page }) => {
     await page.locator("#file-open").setInputFiles(join(fixtures, "sample.pdf"));
-    await expect(page.locator("#pdf-root .textLayer")).toBeVisible({ timeout: 60_000 });
+    await expectPdfReaderTextReady(page);
     await expect(page.locator("#pdf-root .textLayer span")).not.toHaveCount(0);
     const selectable = await page.evaluate(() => {
       const span = document.querySelector("#pdf-root .textLayer span") as HTMLElement | null;
