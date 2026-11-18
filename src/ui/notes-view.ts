@@ -2,7 +2,7 @@ import { createMarginaliaEditor } from "../editor/marginaliaEditor";
 import type { NoteIndex } from "../lib/noteIndex";
 import { getDemoNotes, getDemoQuote, isDemoEnabled } from "../lib/demo-data";
 import { listNotes, saveNote, createNote, renameNote, DEFAULT_NOTE_TITLE, type LibraryNote } from "../lib/notes";
-import { escapeHtml } from "../lib/html";
+import { escapeAttr, escapeHtml } from "../lib/html";
 import { renderFolioBacklinksPanel } from "./folio-backlinks";
 import { noteIndexPath } from "../lib/marginalia-paths";
 import type { WikiNavigationHandlers } from "../lib/wiki-navigation";
@@ -67,7 +67,7 @@ export async function renderNotesView(
             ${all
               .map(
                 (n) =>
-                  `<li><button type="button" class="note-list-item${current?.id === n.id ? " active" : ""}" data-note-id="${escapeHtml(n.id)}" data-note-filename="${escapeHtml(n.filename)}" data-note-title="${escapeHtml(n.title)}">${escapeHtml(n.title)}</button></li>`,
+                  `<li><button type="button" class="note-list-item${current?.id === n.id ? " active" : ""}" data-note-id="${escapeAttr(n.id)}" data-note-filename="${escapeAttr(n.filename)}" data-note-title="${escapeAttr(n.title)}">${escapeHtml(n.title)}</button></li>`,
               )
               .join("")}
           </ul>

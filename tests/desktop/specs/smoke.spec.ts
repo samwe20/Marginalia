@@ -1633,7 +1633,17 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       const renamedTitle = `Smoke prejmenovana ${stamp}`;
       const targetFilename = created[1].filename;
       const targetTitle = targetFilename.replace(/\.md$/, "");
-      await $(`.note-list-item[data-note-filename="${targetFilename}"]`).click();
+      const clickNoteByFilename = async (filename: string) => {
+        const clicked = await browser.execute((name) => {
+          const btn = Array.from(document.querySelectorAll<HTMLElement>("[data-note-filename]")).find(
+            (el) => el.dataset.noteFilename === name,
+          );
+          btn?.click();
+          return Boolean(btn);
+        }, filename);
+        if (!clicked) throw new Error(`note not clickable: ${filename}`);
+      };
+      await clickNoteByFilename(targetFilename);
       // The click handler awaits a full notes remount — wait for that paint, not the pre-click DOM.
       await browser.waitUntil(
         async () =>
@@ -1685,8 +1695,13 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
         }
         disk[c.filename] = md.length + " B";
       }
-      await $(`[data-note-filename="${created[1].filename}"]`).click();
-      await browser.pause(800);
+      // Dataset match — CSS attr selectors break on spaces in renamed filenames.
+      await clickNoteByFilename(created[1].filename);
+      await browser.waitUntil(
+        async () =>
+          (await $(".notes-layout").getAttribute("data-active-note-filename")) === created[1].filename,
+        { timeout: 15_000, timeoutMsg: "renamed note not active after restart click" },
+      );
       await saveScreenshot("smoke-notes-three-after-restart.png");
       record("S27", "Poznámky: 3× Nová, přejmenování, restart", true, JSON.stringify({ disk, oldName }));
     } catch (e) {
@@ -2324,8 +2339,12 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S43 Citace: rozbalitelné filtry kniha/autor/datum + vymazat", async () => {
     try {
+      // With libraryRoot set, Quotes always renders expandable Filtry (even at 0 citací).
       await $('[data-route="quotes"]').click();
-      await browser.waitUntil(async () => Boolean(await $("#quotes-filter").isExisting()), { timeout: 15_000 });
+      await browser.waitUntil(
+        async () => Boolean(await $("#quotes-filters-toggle").isExisting()),
+        { timeout: 20_000, timeoutMsg: "quotes filters toggle missing (user quotes UI)" },
+      );
       const toggle = await $("#quotes-filters-toggle");
       await expect(toggle).toBeDisplayed();
       expect(await toggle.getAttribute("aria-expanded")).toBe("false");

@@ -860,7 +860,9 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     const libraryBooks = state.libraryRoot ? await listLibraryBooksFromDisk(state.libraryRoot) : [];
     const authorBySlug = new Map(libraryBooks.map((b) => [b.slug, b.author]));
     const titleBySlug = new Map(libraryBooks.map((b) => [b.slug, b.title]));
-    if (userQuotes.length) {
+    // Configured library always uses the user quotes + expandable filters chrome —
+    // never fall through to demo `#quotes-filter` without `#quotes-filters-toggle` (S43).
+    if (state.libraryRoot) {
       let filtersExpanded = false;
       let filterState: QuotesFilterState = emptyQuotesFilterState();
       const liveTitles = uniqueSorted(
@@ -892,7 +894,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
                 }),
               )
               .join("")
-          : `<li class="muted">Nic neodpovídá filtru.</li>`;
+          : `<li class="muted">${userQuotes.length ? "Nic neodpovídá filtru." : "Zatím žádné citace — vytvořte je při čtení vlastních knih."}</li>`;
         bindQuoteCommentEditors(list);
         bindQuoteDeleteButtons(list);
         syncQuotesFilterChrome(stageMain, filterState, filtersExpanded);
