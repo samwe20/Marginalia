@@ -1,6 +1,6 @@
 # PR #21 Jan QA — progress
 
-Branch: `cursor/integration-all-d744` · tip (e2e fix pending) · base: `develop` · **do not merge**
+Branch: `cursor/integration-all-d744` · tip `a17b660` · base: `develop` · **do not merge**
 
 ## Status overview
 
