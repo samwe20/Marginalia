@@ -1115,18 +1115,21 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     error: string | null;
   };
   let libraryScanJobState: LibraryScanJobState | null = null;
+  /** Bumped to abort an in-flight bulk scan when a newer job starts (stress T01 timeout left a ghost scan). */
+  let libraryScanEpoch = 0;
 
   const pushRecentFromImport = (book: LibraryBookEntry) => {
     pushRecent({ ...book, updated: book.updated || new Date().toISOString() }, { persist: false });
   };
 
-  const rescanBooksFromFolder = async () => {
+  const rescanBooksFromFolder = async (opts?: { shouldAbort?: () => boolean }) => {
     if (!(await requireLibraryConfigured())) return;
     await runLibraryDedupeMigration();
     const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport, {
       onProgress: (books) => {
         if (libraryScanJobState?.running) libraryScanJobState.books = books;
       },
+      shouldAbort: opts?.shouldAbort,
     });
     flushRecentToDesktop();
     await runLibraryDedupeMigration();
@@ -1134,10 +1137,11 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     if (state.route === "library") await renderLibrary();
   };
 
-  const finishLibrarySetup = async (root: string) => {
+  const finishLibrarySetup = async (root: string, opts?: { shouldAbort?: () => boolean }) => {
     await setLibraryRoot(root);
     await ensureLibrarySubdirs(root);
-    await openLibraryIndex(root);
+    // Open FTS DB only — notes rebuild walks every poznamky file; do it after book import.
+    await openLibraryIndex(root, { rebuildNotes: false });
     setLibraryPath(root, root);
     setStatus(`Knihovna: ${root}`);
     hideLibrarySetupModal();
@@ -1145,8 +1149,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       onProgress: (books) => {
         if (libraryScanJobState?.running) libraryScanJobState.books = books;
       },
+      shouldAbort: opts?.shouldAbort,
     });
     flushRecentToDesktop();
+    if (!opts?.shouldAbort?.()) {
+      await openLibraryIndex(root, { rebuildNotes: true });
+    }
     toast(`Knihovna nastavena — načteno ${n} knih`, "success");
     if (state.route === "settings") renderSettings();
     if (state.route === "library") await renderLibrary();
@@ -1660,6 +1668,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       return { imported, total: (await listBooksForLibrary()).length };
     },
     startLibrarySetupScan: (libraryRoot: string) => {
+      const epoch = ++libraryScanEpoch;
       const job = {
         kind: "setup" as const,
         running: true,
@@ -1670,19 +1679,23 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       libraryScanJobState = job;
       void (async () => {
         try {
-          await finishLibrarySetup(libraryRoot);
+          await finishLibrarySetup(libraryRoot, {
+            shouldAbort: () => epoch !== libraryScanEpoch,
+          });
+          if (epoch !== libraryScanEpoch) return;
           job.books = (await listBooksForLibrary()).length;
           job.imported = job.books;
         } catch (e) {
-          job.error = String(e);
+          if (epoch === libraryScanEpoch) job.error = String(e);
         } finally {
-          job.running = false;
+          if (epoch === libraryScanEpoch) job.running = false;
         }
       })();
       return { started: true };
     },
     startRescanBooks: () => {
       if (!state.libraryRoot) throw new Error("No library root");
+      const epoch = ++libraryScanEpoch;
       const job = {
         kind: "rescan" as const,
         running: true,
@@ -1695,22 +1708,34 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       void (async () => {
         try {
           await runLibraryDedupeMigration();
+          if (epoch !== libraryScanEpoch) return;
           job.imported = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport, {
             onProgress: (books) => {
-              job.books = books;
+              if (epoch === libraryScanEpoch) job.books = books;
             },
+            shouldAbort: () => epoch !== libraryScanEpoch,
           });
+          if (epoch !== libraryScanEpoch) return;
           flushRecentToDesktop();
           await runLibraryDedupeMigration();
           if (state.route === "library") await renderLibrary();
           job.books = (await listBooksForLibrary()).length;
         } catch (e) {
-          job.error = String(e);
+          if (epoch === libraryScanEpoch) job.error = String(e);
         } finally {
-          job.running = false;
+          if (epoch === libraryScanEpoch) job.running = false;
         }
       })();
       return { started: true };
+    },
+    /** Abort any in-flight bulk scan (bumps epoch). */
+    cancelLibraryScan: () => {
+      libraryScanEpoch += 1;
+      if (libraryScanJobState) {
+        libraryScanJobState.running = false;
+        libraryScanJobState.error = "cancelled";
+      }
+      return { cancelled: true };
     },
     libraryScanJob: () =>
       libraryScanJobState ?? {
@@ -1720,6 +1745,17 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
         imported: 0,
         error: null,
       },
+    /** Approx JS heap used by the WebView (MB). */
+    libraryMemoryMb: () => {
+      const mem = (
+        performance as unknown as { memory?: { usedJSHeapSize: number; totalJSHeapSize: number } }
+      ).memory;
+      if (!mem) return { usedJsHeapMb: null, totalJsHeapMb: null };
+      return {
+        usedJsHeapMb: Math.round((mem.usedJSHeapSize / (1024 * 1024)) * 10) / 10,
+        totalJsHeapMb: Math.round((mem.totalJSHeapSize / (1024 * 1024)) * 10) / 10,
+      };
+    },
     countScannedBookCards: async () => (await listBooksForLibrary()).length,
     libraryStressSummary: async () => {
       const books = await listBooksForLibrary();

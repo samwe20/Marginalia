@@ -1,52 +1,47 @@
 # PR #21 Jan QA — progress
 
-Branch: `cursor/integration-all-d744` · tip (O(n²) scan fix) · base: `develop` · **do not merge**
+Branch: `cursor/integration-all-d744` · tip (pending push) · base: `develop` · **do not merge**
 
 ## Status overview
 
 | # | Úprava | Smoke | CI |
 |---|--------|-------|-----|
-| 1 | Chevron metadata | **S39** | green |
-| 2 | Čitelné backlinky | **S40** | green |
-| 3 | Deduplikace knih | **S41** | green |
+| 1 | Chevron | **S39** | green |
+| 2 | Backlink citace | **S40** | green |
+| 3 | Deduplikace | **S41** | green |
 | 4 | Koš + Vrátit | **S42** | green |
-| 5 | Rozbalitelné filtry | **S43** | green |
-| 6 | Stress 1000 knih | stress.spec | red on 2e2323a → O(n²) fix |
+| 5 | Filtry | **S43** | green |
+| 6 | Stress 1000 knih | stress.spec | fixing perf |
 
 ## Run [44217431406](https://github.com/samwe20/Marginalia/actions/runs/44217431406) — `2e2323a`
 
-| Job | Result |
-|-----|--------|
-| web e2e | ✓ |
-| windows-installed-smoke | ✓ **44/44** |
-| windows-pr-test-release | ✓ exe `c782e8e` |
-| windows-installed-stress | ✗ |
-
-### Stress metrics (actual, incomplete)
+Smoke **44/44** ✓ · Stress ✗
 
 | metric | value | threshold | result |
 |--------|-------|-----------|--------|
-| expectedBooks | 1000 | 1000 | — |
-| books after T01 timeout | **403** | 1000 | ✗ T01 still running after 720s |
-| uniqueSlugs / uniqueShas | 403 / 403 | = books | no dupes |
-| duplicateSlugCount / Sha | 0 / 0 | 0 | ✓ |
-| quotes | 5000 | ≥5000 | ✓ T03 |
-| notes | 500 | ≥500 | ✓ T03 |
-| initialScanMsMax | — | 600000 ms | not finished |
-| rescanMsMax | — | 480000 ms | T04/T05 timed out mid-scan (515→579 books) |
+| books @ T01 timeout | 403 | 1000 | ✗ |
+| quotes / notes | 5000 / 500 | ≥5000 / ≥500 | ✓ |
+| rescan progress | 515 → 579 | stable 1000 | ✗ (ghost scan overlap) |
+| initialScanMsMax | — | 600000 | not finished |
+| rescanMsMax | — | 480000 | timeouts |
 
-T00 ✓ · T01 ✗ · T02 ✗ · T03 ✓ · T04 ✗ · T05 ✗ · T06 ✓
+**Root causes**
+1. O(n²) `findBookCardBySha256` during bulk import (`5a37550`)
+2. Ghost scan: T01 timeout left `finishLibrarySetup` running → T04/T05 started parallel rescans → book count grew 403→515→579 (not true dupes)
+3. Notes FTS rebuild before import; card rewrites on unchanged identity
 
-**Root cause:** each new book called `findBookCardBySha256` → full `listBookCardsWithSlugs` (O(n²) disk reads). Bulk scan now trusts the in-memory sha index (`trustCallerIdentity`).
-
-Not measured by this stress job: covers, open book, search, filters UI, backlinks, memory.
+**Fixes in this tip**
+- Scan epoch + `cancelLibraryScan` / `shouldAbort` (no overlapping imports)
+- Skip card rewrite when sha/path/title/author unchanged
+- Defer notes FTS until after book import
+- Stress table: import/rescan ms, books, quotes, notes, JS heap MB
 
 ## Smoke ↔ Jan 1–5
 
-| # | Feature | Smoke |
-|---|---------|-------|
-| 1 | Chevron | S39 |
-| 2 | Backlink citace | S40 |
-| 3 | Deduplikace | S41 |
-| 4 | Koš + Vrátit | S42 |
-| 5 | Filtry | S43 |
+| Úprava | Test |
+|--------|------|
+| Chevron | S39 |
+| Backlink | S40 |
+| Deduplikace | S41 |
+| Koš + Vrátit | S42 |
+| Filtry | S43 |

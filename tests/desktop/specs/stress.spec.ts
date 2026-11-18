@@ -29,7 +29,7 @@ type ScanJob = {
 };
 
 const results: Row[] = [];
-const metrics: Record<string, number | string | boolean> = {};
+const metrics: Record<string, number | string | boolean | null> = {};
 
 function record(id: string, name: string, ok: boolean, detail?: string, ms?: number) {
   results.push({ id, name, ok, detail, ms });
@@ -85,12 +85,43 @@ async function goLibrary() {
   await browser.pause(400);
 }
 
+async function sampleMemory(label: string) {
+  try {
+    const mem = await callSmokeApi<{ usedJsHeapMb: number | null; totalJsHeapMb: number | null }>(
+      "libraryMemoryMb",
+    );
+    metrics[`${label}UsedJsHeapMb`] = mem.usedJsHeapMb;
+    metrics[`${label}TotalJsHeapMb`] = mem.totalJsHeapMb;
+    return mem;
+  } catch {
+    metrics[`${label}UsedJsHeapMb`] = null;
+    return null;
+  }
+}
+
 function writeArtifacts() {
   fs.mkdirSync(artifactDir, { recursive: true });
   fs.writeFileSync(path.join(artifactDir, "stress-results.json"), JSON.stringify(results, null, 2));
   fs.writeFileSync(path.join(artifactDir, "stress-metrics.json"), JSON.stringify(metrics, null, 2));
 
-  const lines = [
+  const threshInitial = metrics.initialScanMsMax ?? "";
+  const threshRescan = metrics.rescanMsMax ?? "";
+  const summaryLines = [
+    "| metric | value | threshold |",
+    "|--------|-------|-----------|",
+    `| initialScanMs | ${metrics.initialScanMs ?? ""} | ${threshInitial} |`,
+    `| rescanMs | ${metrics.rescanMs ?? ""} | ${threshRescan} |`,
+    `| secondRescanMs | ${metrics.secondRescanMs ?? ""} | ${threshRescan} |`,
+    `| books | ${metrics.books ?? metrics.initialBookCount ?? ""} | ${metrics.expectedBooks ?? ""} |`,
+    `| quotes | ${metrics.quotes ?? ""} | ${metrics.expectedQuotes ?? ""} |`,
+    `| notes | ${metrics.notes ?? ""} | ${metrics.expectedNotes ?? ""} |`,
+    `| afterImportUsedJsHeapMb | ${metrics.afterImportUsedJsHeapMb ?? ""} | — |`,
+    `| afterRescanUsedJsHeapMb | ${metrics.afterRescanUsedJsHeapMb ?? ""} | — |`,
+    `| duplicateSlugCount | ${metrics.duplicateSlugCount ?? ""} | 0 |`,
+    `| duplicateShaCount | ${metrics.duplicateShaCount ?? ""} | 0 |`,
+  ];
+
+  const caseLines = [
     "| id | name | ok | ms | detail |",
     "|----|------|----|----|--------|",
     ...results.map(
@@ -98,8 +129,11 @@ function writeArtifacts() {
         `| ${r.id} | ${r.name} | ${r.ok ? "✓" : "✗"} | ${r.ms ?? ""} | ${(r.detail ?? "").replace(/\|/g, "/")} |`,
     ),
   ];
+
   // eslint-disable-next-line no-console
-  console.log("\n=== stress metrics table ===\n" + lines.join("\n") + "\n");
+  console.log("\n=== stress metrics table ===\n" + summaryLines.join("\n") + "\n");
+  // eslint-disable-next-line no-console
+  console.log("=== stress cases ===\n" + caseLines.join("\n") + "\n");
   // eslint-disable-next-line no-console
   console.log("stress-metrics.json:", JSON.stringify(metrics, null, 2));
 }
@@ -121,10 +155,17 @@ async function awaitScanJob(
   while (Date.now() < deadline) {
     last = await callSmokeApi<ScanJob>("libraryScanJob");
     if (!last.running) {
-      if (last.error) throw new Error(`${startMethod} failed: ${last.error}`);
+      if (last.error && last.error !== "cancelled") {
+        throw new Error(`${startMethod} failed: ${last.error}`);
+      }
       return last;
     }
     await browser.pause(1_500);
+  }
+  try {
+    await callSmokeApi("cancelLibraryScan");
+  } catch {
+    /* best-effort — stop ghost scan before the next test */
   }
   throw new Error(`${startMethod} still running after ${timeoutMs}ms (last books=${last.books})`);
 }
@@ -162,6 +203,11 @@ describe("Marginalia installed-app stress", () => {
       if (!apiOk) throw new Error("__MARGINALIA_SMOKE_API__ missing");
       metrics.libraryRoot = library;
       metrics.expectedBooks = expectedBooks;
+      metrics.expectedQuotes = expectedQuotes;
+      metrics.expectedNotes = expectedNotes;
+      metrics.initialScanMsMax = initialScanMsMax;
+      metrics.rescanMsMax = rescanMsMax;
+      await sampleMemory("baseline");
       record("T00", "Shell + smoke API", true, library);
     } catch (e) {
       record("T00", "Shell + smoke API", false, String(e));
@@ -181,6 +227,7 @@ describe("Marginalia installed-app stress", () => {
       const loaded = job.books;
       metrics.initialScanMs = initialScanMs;
       metrics.initialBookCount = loaded;
+      await sampleMemory("afterImport");
 
       if (loaded !== expectedBooks) {
         throw new Error(`expected ${expectedBooks} books after setup scan, got ${loaded}`);
@@ -280,6 +327,7 @@ describe("Marginalia installed-app stress", () => {
       metrics.rescanImported = job.imported;
       metrics.rescanTotal = job.books;
       metrics.rescanBookCount = after;
+      await sampleMemory("afterRescan");
 
       if (after !== before || after !== expectedBooks) {
         throw new Error(`rescan grew/shrank books ${before} → ${after} (expected ${expectedBooks})`);
@@ -336,7 +384,7 @@ describe("Marginalia installed-app stress", () => {
   it("T06 metrics artifact written", async () => {
     try {
       metrics.ok = results.every((r) => r.ok);
-      metrics.failed = results.filter((r) => !r.ok).map((r) => r.id);
+      metrics.failed = results.filter((r) => !r.ok).map((r) => r.id).join(",");
       writeArtifacts();
       if (!fs.existsSync(path.join(artifactDir, "stress-metrics.json"))) {
         throw new Error("stress-metrics.json missing");

@@ -25,6 +25,10 @@ function bookKind(fileName: string): "pdf" | "epub" | "mobi" {
 
 type ShaIndex = Map<string, string>; // sha256 → slug
 
+function normalizePathKey(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase();
+}
+
 /**
  * Register one on-disk book (no reader open).
  * Identity is content hash — never create a second card when title/metadata differ.
@@ -82,6 +86,23 @@ export async function registerBookFromDiskPath(
     if (looksLikeTechnicalSlug(nextTitle) && title) nextTitle = title;
     if (!nextAuthor && authorFromName) nextAuthor = authorFromName;
     const path = existingCard.path || filePath;
+    const pathSame = normalizePathKey(path) === normalizePathKey(filePath) || !filePath;
+    const shaSame = (existingCard.sha256 || "").trim().toLowerCase() === shaKey;
+    const titleSame = (existingCard.title || "") === nextTitle;
+    const authorSame = (existingCard.author || "") === nextAuthor;
+    // Unchanged identity — do not rewrite the card (rescan must stay cheap).
+    if (bulk && shaSame && pathSame && titleSame && authorSame) {
+      shaIndex?.set(shaKey, existingSlug);
+      pushRecent({
+        slug: existingSlug,
+        kind,
+        title: nextTitle,
+        author: nextAuthor,
+        sha256: sha,
+        filePath: path,
+      });
+      return existingSlug;
+    }
     const slug = await ensureBookCard(
       libraryRoot,
       {
@@ -140,14 +161,17 @@ function yieldToUi(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function normalizePathKey(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase();
-}
+export type SyncBooksOptions = {
+  onProgress?: (registered: number) => void;
+  yieldEvery?: number;
+  /** When true, abort the loop ASAP (superseded scan job). */
+  shouldAbort?: () => boolean;
+};
 
 export async function syncAllBooksFromLibraryFolder(
   libraryRoot: string,
   pushRecent: ImportRecentPush,
-  opts?: { onProgress?: (registered: number) => void; yieldEvery?: number },
+  opts?: SyncBooksOptions,
 ): Promise<number> {
   const paths = await findBookFilesOnDisk(libraryRoot);
   // One disk pass for existing cards — avoids O(n²) re-reads during large scans.
@@ -159,12 +183,15 @@ export async function syncAllBooksFromLibraryFolder(
     if (card.path) pathIndex.set(normalizePathKey(card.path), { slug, card });
   }
 
-  const yieldEvery = Math.max(1, opts?.yieldEvery ?? 8);
+  const yieldEvery = Math.max(1, opts?.yieldEvery ?? 16);
   let count = 0;
   for (let i = 0; i < paths.length; i++) {
+    if (opts?.shouldAbort?.()) {
+      throw new Error("library scan aborted (superseded)");
+    }
     const p = paths[i]!;
     try {
-      // Unchanged rescan fast-path: known path + sha → skip re-hashing the file.
+      // Unchanged rescan fast-path: known path + sha → skip re-hash + skip card rewrite.
       const known = pathIndex.get(normalizePathKey(p));
       if (known?.card.sha256 && known.card.sha256.trim().length >= 8) {
         const shaKey = known.card.sha256.trim().toLowerCase();
@@ -182,7 +209,8 @@ export async function syncAllBooksFromLibraryFolder(
         const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent, shaIndex);
         if (slug) count += 1;
       }
-    } catch {
+    } catch (e) {
+      if (String(e).includes("aborted")) throw e;
       /* one corrupt file must not abort the whole scan */
     }
     opts?.onProgress?.(count);

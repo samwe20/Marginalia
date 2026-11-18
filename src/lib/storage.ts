@@ -321,9 +321,13 @@ export async function loadQuotesForBook(libraryRoot: string, slug: string): Prom
   return docs.filter((d) => d.meta.book_slug === slug);
 }
 
-export async function openLibraryIndex(libraryRoot?: string): Promise<void> {
+export async function openLibraryIndex(
+  libraryRoot?: string,
+  opts?: { rebuildNotes?: boolean },
+): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("index_open");
-  if (libraryRoot) await rebuildNotesSearchIndex(libraryRoot);
+  // Notes FTS rebuild reads every poznamky/*.md — defer during large book imports.
+  if (libraryRoot && opts?.rebuildNotes !== false) await rebuildNotesSearchIndex(libraryRoot);
 }

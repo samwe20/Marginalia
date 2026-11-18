@@ -63,6 +63,7 @@ export type SmokeTestApi = {
    */
   startLibrarySetupScan: (libraryRoot: string) => { started: boolean };
   startRescanBooks: () => { started: boolean };
+  cancelLibraryScan: () => { cancelled: boolean };
   libraryScanJob: () => {
     kind: "idle" | "setup" | "rescan";
     running: boolean;
@@ -70,6 +71,7 @@ export type SmokeTestApi = {
     imported: number;
     error: string | null;
   };
+  libraryMemoryMb: () => { usedJsHeapMb: number | null; totalJsHeapMb: number | null };
   countScannedBookCards: () => Promise<number>;
   /** Stress CI: unique slug/sha diagnostics for large libraries. */
   libraryStressSummary: () => Promise<{
