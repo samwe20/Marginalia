@@ -134,29 +134,53 @@ function yieldToUi(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function normalizePathKey(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase();
+}
+
 export async function syncAllBooksFromLibraryFolder(
   libraryRoot: string,
   pushRecent: ImportRecentPush,
+  opts?: { onProgress?: (registered: number) => void; yieldEvery?: number },
 ): Promise<number> {
   const paths = await findBookFilesOnDisk(libraryRoot);
   // One disk pass for existing cards — avoids O(n²) re-reads during large scans.
   const shaIndex: ShaIndex = new Map();
+  const pathIndex = new Map<string, { slug: string; card: ParsedBookCard }>();
   for (const { slug, card } of await listBookCardsWithSlugs(libraryRoot)) {
     const sha = card.sha256.trim().toLowerCase();
     if (sha.length >= 8) shaIndex.set(sha, slug);
+    if (card.path) pathIndex.set(normalizePathKey(card.path), { slug, card });
   }
 
+  const yieldEvery = Math.max(1, opts?.yieldEvery ?? 8);
   let count = 0;
   for (let i = 0; i < paths.length; i++) {
     const p = paths[i]!;
     try {
-      const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent, shaIndex);
-      if (slug) count += 1;
+      // Unchanged rescan fast-path: known path + sha → skip re-hashing the file.
+      const known = pathIndex.get(normalizePathKey(p));
+      if (known?.card.sha256 && known.card.sha256.trim().length >= 8) {
+        const shaKey = known.card.sha256.trim().toLowerCase();
+        shaIndex.set(shaKey, known.slug);
+        pushRecent({
+          slug: known.slug,
+          kind: bookKind(p.replace(/^.*[/\\]/, "")),
+          title: known.card.title,
+          author: known.card.author,
+          sha256: known.card.sha256,
+          filePath: known.card.path || p,
+        });
+        count += 1;
+      } else {
+        const slug = await registerBookFromDiskPath(libraryRoot, p, pushRecent, shaIndex);
+        if (slug) count += 1;
+      }
     } catch {
       /* one corrupt file must not abort the whole scan */
     }
-    // Yield every book so WDIO can poll / the UI stays responsive.
-    await yieldToUi();
+    opts?.onProgress?.(count);
+    if (i % yieldEvery === yieldEvery - 1) await yieldToUi();
   }
   return count;
 }

@@ -461,7 +461,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     }
   };
 
-  const pushRecent = (book: RecentBook) => {
+  const pushRecent = (book: RecentBook, opts?: { persist?: boolean }) => {
     const sha = (book.sha256 || "").trim().toLowerCase();
     const list = getRecentBooks().filter((b) => {
       if (b.slug === book.slug) return false;
@@ -470,6 +470,14 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
     list.unshift({ ...book, updated: book.updated || new Date().toISOString() });
     recentBooksCache = dedupeRecentBooks(list).slice(0, 24);
+    localStorage.setItem("marginalia.recentBooks", JSON.stringify(recentBooksCache));
+    // Bulk library scans must not await a desktop-store write per book (stress ~1000×).
+    if (opts?.persist === false) return;
+    void saveDesktopRecentBooks(recentBooksCache);
+    if (state.libraryRoot) void saveDesktopLibraryRoot(state.libraryRoot);
+  };
+
+  const flushRecentToDesktop = () => {
     localStorage.setItem("marginalia.recentBooks", JSON.stringify(recentBooksCache));
     void saveDesktopRecentBooks(recentBooksCache);
     if (state.libraryRoot) void saveDesktopLibraryRoot(state.libraryRoot);
@@ -1099,14 +1107,28 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     });
   };
 
+  type LibraryScanJobState = {
+    kind: "idle" | "setup" | "rescan";
+    running: boolean;
+    books: number;
+    imported: number;
+    error: string | null;
+  };
+  let libraryScanJobState: LibraryScanJobState | null = null;
+
   const pushRecentFromImport = (book: LibraryBookEntry) => {
-    pushRecent({ ...book, updated: book.updated || new Date().toISOString() });
+    pushRecent({ ...book, updated: book.updated || new Date().toISOString() }, { persist: false });
   };
 
   const rescanBooksFromFolder = async () => {
     if (!(await requireLibraryConfigured())) return;
     await runLibraryDedupeMigration();
-    const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+    const n = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport, {
+      onProgress: (books) => {
+        if (libraryScanJobState?.running) libraryScanJobState.books = books;
+      },
+    });
+    flushRecentToDesktop();
     await runLibraryDedupeMigration();
     toast(n ? `Načteno knih: ${n}` : "Ve složce nejsou nové knihy (PDF/EPUB/MOBI)", n ? "success" : "info");
     if (state.route === "library") await renderLibrary();
@@ -1119,7 +1141,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     setLibraryPath(root, root);
     setStatus(`Knihovna: ${root}`);
     hideLibrarySetupModal();
-    const n = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport);
+    const n = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport, {
+      onProgress: (books) => {
+        if (libraryScanJobState?.running) libraryScanJobState.books = books;
+      },
+    });
+    flushRecentToDesktop();
     toast(`Knihovna nastavena — načteno ${n} knih`, "success");
     if (state.route === "settings") renderSettings();
     if (state.route === "library") await renderLibrary();
@@ -1495,15 +1522,6 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
   });
 
 
-  type LibraryScanJobState = {
-    kind: "idle" | "setup" | "rescan";
-    running: boolean;
-    books: number;
-    imported: number;
-    error: string | null;
-  };
-  let libraryScanJobState: LibraryScanJobState | null = null;
-
   installSmokeTestApi({
     dropBookFromPath: async (libraryRoot, filePath) => {
       if (!libraryRoot) {
@@ -1636,6 +1654,7 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       if (!(await requireLibraryConfigured())) throw new Error("No library root");
       await runLibraryDedupeMigration();
       const imported = await syncAllBooksFromLibraryFolder(state.libraryRoot, pushRecentFromImport);
+      flushRecentToDesktop();
       await runLibraryDedupeMigration();
       if (state.route === "library") await renderLibrary();
       return { imported, total: (await listBooksForLibrary()).length };
@@ -1676,7 +1695,12 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
       void (async () => {
         try {
           await runLibraryDedupeMigration();
-          job.imported = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport);
+          job.imported = await syncAllBooksFromLibraryFolder(root, pushRecentFromImport, {
+            onProgress: (books) => {
+              job.books = books;
+            },
+          });
+          flushRecentToDesktop();
           await runLibraryDedupeMigration();
           if (state.route === "library") await renderLibrary();
           job.books = (await listBooksForLibrary()).length;
@@ -1946,7 +1970,10 @@ export async function bootApp(root: HTMLElement, themeCtrl: ThemeController): Pr
     setLibraryPath(state.libraryRoot, state.libraryRoot);
     void runLibraryDedupeMigration()
       .then(() => syncAllBooksFromLibraryFolder(libraryRoot, pushRecentFromImport))
-      .then(() => runLibraryDedupeMigration())
+      .then(() => {
+        flushRecentToDesktop();
+        return runLibraryDedupeMigration();
+      })
       .then(() => {
         if (state.route === "library") void renderLibrary();
       });

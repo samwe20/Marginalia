@@ -2339,18 +2339,27 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
 
   it("S43 Citace: rozbalitelné filtry kniha/autor/datum + vymazat", async () => {
     try {
-      // With libraryRoot set, Quotes always renders expandable Filtry (even at 0 citací).
+      // With libraryRoot + demo off (or user quotes present), Quotes renders expandable Filtry.
       await $('[data-route="quotes"]').click();
       await browser.waitUntil(
-        async () => Boolean(await $("#quotes-filters-toggle").isExisting()),
+        async () =>
+          Boolean(
+            await browser.execute(() => Boolean(document.querySelector("#quotes-filters-toggle"))),
+          ),
         { timeout: 20_000, timeoutMsg: "quotes filters toggle missing (user quotes UI)" },
       );
       const toggle = await $("#quotes-filters-toggle");
       await expect(toggle).toBeDisplayed();
-      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      const expanded0 = await browser.execute(
+        () => document.querySelector("#quotes-filters-toggle")?.getAttribute("aria-expanded") ?? "",
+      );
+      expect(expanded0).toBe("false");
       await toggle.click();
       await browser.pause(300);
-      expect(await toggle.getAttribute("aria-expanded")).toBe("true");
+      const expanded1 = await browser.execute(
+        () => document.querySelector("#quotes-filters-toggle")?.getAttribute("aria-expanded") ?? "",
+      );
+      expect(expanded1).toBe("true");
       const panel = await $("#quotes-filters-panel");
       await expect(panel).toBeDisplayed();
       const bookCb = await panel.$("input[data-filter-book]");
@@ -2373,7 +2382,10 @@ describe("Marginalia installed-app smoke (mandatory suite)", () => {
       await expect(clear).toBeDisplayed();
       await clear.click();
       await browser.pause(400);
-      expect(await toggle.getAttribute("aria-expanded")).toBe("false");
+      const expandedAfterClear = await browser.execute(
+        () => document.querySelector("#quotes-filters-toggle")?.getAttribute("aria-expanded") ?? "",
+      );
+      expect(expandedAfterClear).toBe("false");
       const filterInput = await $("#quotes-filter");
       await filterInput.setValue("a");
       await browser.pause(400);
