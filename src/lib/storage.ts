@@ -65,24 +65,26 @@ async function indexUpsert(doc: QuoteDocument, absPath: string): Promise<void> {
 export async function ensureBookCard(
   libraryRoot: string,
   book: BookMeta,
-  opts: { slug?: string } = {},
+  opts: { slug?: string; /** Bulk scan already resolved identity via sha/path index — skip O(n) disk walks. */ trustCallerIdentity?: boolean } = {},
 ): Promise<string> {
   const now = new Date().toISOString();
   let slug = opts.slug?.trim() || "";
   let existing: ParsedBookCard | null = slug ? await loadBookCard(libraryRoot, slug) : null;
 
-  if (!existing && book.sha256) {
-    const bySha = await findBookCardBySha256(libraryRoot, book.sha256);
-    if (bySha) {
-      slug = bySha.slug;
-      existing = bySha.card;
+  if (!opts.trustCallerIdentity) {
+    if (!existing && book.sha256) {
+      const bySha = await findBookCardBySha256(libraryRoot, book.sha256);
+      if (bySha) {
+        slug = bySha.slug;
+        existing = bySha.card;
+      }
     }
-  }
-  if (!existing && book.filePath) {
-    const byPath = await findBookCardByPath(libraryRoot, book.filePath);
-    if (byPath) {
-      slug = byPath.slug;
-      existing = byPath.card;
+    if (!existing && book.filePath) {
+      const byPath = await findBookCardByPath(libraryRoot, book.filePath);
+      if (byPath) {
+        slug = byPath.slug;
+        existing = byPath.card;
+      }
     }
   }
   if (!slug) slug = bookSlug(book.title, book.sha256);

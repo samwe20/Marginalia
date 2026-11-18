@@ -65,14 +65,16 @@ export async function registerBookFromDiskPath(
   let existingCard: ParsedBookCard | null = existingSlug
     ? await loadBookCard(libraryRoot, existingSlug)
     : null;
-  if (!existingCard) {
+  // With a bulk shaIndex, never re-walk knihy/*.md (that was O(n²) and stalled stress at ~400/1000).
+  if (!existingCard && !shaIndex) {
     const bySha = await findBookCardBySha256(libraryRoot, sha);
     if (bySha) {
       existingSlug = bySha.slug;
       existingCard = bySha.card;
-      shaIndex?.set(shaKey, existingSlug);
     }
   }
+
+  const bulk = Boolean(shaIndex);
 
   if (existingCard && existingSlug) {
     let nextTitle = existingCard.title || title;
@@ -88,7 +90,7 @@ export async function registerBookFromDiskPath(
         sha256: sha,
         filePath: path,
       },
-      { slug: existingSlug },
+      { slug: existingSlug, trustCallerIdentity: bulk },
     );
     shaIndex?.set(shaKey, slug);
     pushRecent({
@@ -108,12 +110,16 @@ export async function registerBookFromDiskPath(
     storedPath = persisted.storedPath;
   }
 
-  const slug = await ensureBookCard(libraryRoot, {
-    title,
-    author: authorFromName,
-    sha256: sha,
-    filePath: storedPath,
-  } satisfies BookMeta);
+  const slug = await ensureBookCard(
+    libraryRoot,
+    {
+      title,
+      author: authorFromName,
+      sha256: sha,
+      filePath: storedPath,
+    } satisfies BookMeta,
+    { trustCallerIdentity: bulk },
+  );
   shaIndex?.set(shaKey, slug);
 
   pushRecent({
