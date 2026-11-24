@@ -18,7 +18,8 @@ export async function indexUpsertNote(libraryRoot: string, note: LibraryNote): P
 export async function indexRemoveNote(noteId: string): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("index_remove_note", { note_id: noteId });
+  // Tauri 2 renames command args to camelCase over IPC (`note_id` → `noteId`).
+  await invoke("index_remove_note", { noteId });
 }
 
 export async function rebuildNotesSearchIndex(libraryRoot: string): Promise<void> {

@@ -10,6 +10,11 @@ export interface NoteMeta {
   mtime: number;
   createdAt: number | null;
   kind?: MarginaliaEntityKind;
+  /** Quote display — never show id/slug as the primary label. */
+  quotePreview?: string;
+  quoteBookTitle?: string;
+  quotePage?: string;
+  quoteBookSlug?: string;
 }
 
 export interface WikiTarget {

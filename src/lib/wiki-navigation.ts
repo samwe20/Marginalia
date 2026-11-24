@@ -1,12 +1,14 @@
 import type { NoteIndex } from "./noteIndex";
 import { bookIndexPath, noteIndexPath, quoteIndexPath } from "./marginalia-paths";
 import { getDemoBook, getDemoQuote } from "./demo-data";
-import { createBlankNote, saveNote } from "./notes";
+import { createNote } from "./notes";
 import type { NoteMeta } from "../types/folio";
 
 export interface WikiNavigationHandlers {
   openBookDetail: (slug: string) => void;
   openQuoteDetail: (id: string) => void;
+  /** Open a library quote in the reader at its locus (PDF/EPUB/MOBI). */
+  openLibraryQuote: (quoteId: string) => void;
   openNoteEditor: (noteId: string) => void;
   createNoteWithTitle: (title: string) => Promise<void>;
   toast: (msg: string, kind?: "info" | "error" | "success") => void;
@@ -37,9 +39,9 @@ export function openWikiTarget(
     return;
   }
   if (hit.kind === "quote" || hit.path.startsWith("citace/")) {
-    const id = hit.path.replace(/^citace\//, "");
+    const id = hit.id || hit.path.replace(/^citace\//, "");
     if (getDemoQuote(id)) handlers.openQuoteDetail(id);
-    else handlers.toast(`Citace ${id}`, "info");
+    else handlers.openLibraryQuote(id);
     return;
   }
   handlers.openNoteEditor(hit.id);
@@ -63,9 +65,7 @@ export async function createNoteFromTitle(
   index: NoteIndex,
   handlers: Pick<WikiNavigationHandlers, "openNoteEditor" | "toast">,
 ): Promise<void> {
-  const note = createBlankNote(title);
-  note.body = `# ${title}\n\n`;
-  await saveNote(libraryRoot, note);
+  const note = await createNote(libraryRoot, title);
   handlers.toast("Poznámka vytvořena", "success");
   const meta: NoteMeta = {
     id: note.id,
