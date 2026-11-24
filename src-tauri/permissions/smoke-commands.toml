@@ -1,0 +1,18 @@
+[[permission]]
+identifier = "smoke-commands"
+description = "CI smoke harness (MARGINALIA_SMOKE=1 only)."
+commands.allow = [
+  "smoke_is_enabled",
+  "smoke_fixture_paths",
+  "smoke_open_book",
+  "smoke_drop_book",
+  "smoke_dialog_capable",
+  "smoke_list_quote_files",
+  "smoke_read_library_text",
+  "smoke_epub_fixture_paragraph",
+  "smoke_defer_fixture_library",
+  "smoke_reset_first_run",
+  "smoke_expected_documents_library",
+  "smoke_adopt_fixture_library",
+  "smoke_stage_file_in_library",
+]
